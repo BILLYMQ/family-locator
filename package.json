@@ -17,7 +17,9 @@
     "eas:init": "npx eas init"
   },
   "dependencies": {
+    "@expo/metro-runtime": "^56.0.15",
     "@expo/vector-icons": "^14.0.0",
+    "@react-native/js-polyfills": "^0.74.89",
     "@react-navigation/bottom-tabs": "^6.5.20",
     "@react-navigation/native": "^6.1.17",
     "@react-navigation/native-stack": "^6.9.26",
@@ -36,16 +38,27 @@
     "expo-status-bar": "~1.12.1",
     "expo-system-ui": "^56.0.5",
     "expo-task-manager": "~11.8.2",
+    "leaflet": "^1.9.4",
+    "metro": "^0.80.12",
+    "metro-config": "^0.80.12",
+    "metro-runtime": "^0.80.12",
     "nativewind": "^4.0.1",
     "react": "18.2.0",
+    "react-dom": "^18.2.0",
+    "react-leaflet": "^5.0.0",
     "react-native": "0.74.1",
+    "react-native-css-interop": "^0.2.5",
     "react-native-maps": "1.14.0",
     "react-native-safe-area-context": "4.10.1",
     "react-native-screens": "3.31.1",
-    "react-native-url-polyfill": "^2.0.0"
+    "react-native-url-polyfill": "^2.0.0",
+    "react-native-web": "^0.19.13",
+    "react-native-worklets-core": "^1.6.3"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
+    "@types/leaflet": "^1.9.21",
+    "@types/node": "^25.9.3",
     "@types/react": "~18.2.79",
     "tailwindcss": "^3.4.3",
     "typescript": "^5.3.3"

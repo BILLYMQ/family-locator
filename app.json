@@ -68,7 +68,16 @@
     },
     "web": {
       "bundler": "metro",
-      "output": "static"
+      "output": "spa",
+      "favicon": "./assets/icon.png",
+      "name": "FamilyLocator",
+      "shortName": "FamilyLocator",
+      "description": "Suivez la localisation de votre famille en temps réel",
+      "backgroundColor": "#1e40af",
+      "themeColor": "#1e40af",
+      "lang": "fr",
+      "scope": "/",
+      "startUrl": "/"
     },
     "owner": "yanikalphonse"
   }
