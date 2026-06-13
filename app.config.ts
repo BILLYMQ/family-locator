@@ -11,7 +11,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
     appEnv:          process.env.APP_ENV ?? 'development',
     eas: {
-      projectId: process.env.EAS_PROJECT_ID ?? '',
+      projectId: 'f49acd09-e6a3-4e1c-9859-daa2aadb4879',
     },
   },
 });
