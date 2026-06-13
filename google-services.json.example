@@ -1,0 +1,27 @@
+{
+  "_comment": "Téléchargez ce fichier depuis Firebase Console > Paramètres du projet > google-services.json",
+  "_comment2": "Sans ce fichier, les notifications push Android (FCM) ne fonctionneront PAS.",
+  "_comment3": "Étapes : https://console.firebase.google.com → New project → Android app → com.familylocator.app",
+  "project_info": {
+    "project_number": "VOTRE_PROJECT_NUMBER",
+    "project_id": "VOTRE_PROJECT_ID",
+    "storage_bucket": "VOTRE_PROJECT_ID.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:XXXXXXXXXX:android:XXXXXXXXXXXXXXXX",
+        "android_client_info": {
+          "package_name": "com.familylocator.app"
+        }
+      },
+      "api_key": [{ "current_key": "VOTRE_API_KEY" }],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

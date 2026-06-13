@@ -1,0 +1,13 @@
+# Fichiers exclus des uploads vers les serveurs EAS Build
+.env
+.env.local
+.env.*.local
+node_modules/
+android/
+ios/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+google-service-account.json

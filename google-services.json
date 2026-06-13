@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "519109075411",
+    "project_id": "familylocato",
+    "storage_bucket": "familylocato.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:519109075411:android:26824374876bcaf034cf26",
+        "android_client_info": {
+          "package_name": "com.familylocator.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB9cCqa2LMzb6FqQPOZCii1DH3BPdqdm5A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

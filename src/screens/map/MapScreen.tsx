@@ -1,0 +1,263 @@
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Alert,
+  Switch,
+  ScrollView,
+  Platform,
+} from 'react-native';
+import MapView, { Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/hooks/useAuth';
+import { useFamily } from '@/hooks/useFamily';
+import { useLocation } from '@/hooks/useLocation';
+import { FamilyMember, Location } from '@/types/database';
+
+// Couleurs assignées aux membres (cyclique)
+const MEMBER_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4'];
+
+export default function MapScreen() {
+  const { user, profile } = useAuth();
+  const { members } = useFamily(user?.id);
+  const { currentLocation, tracking, permissionDenied, enableTracking, disableTracking } = useLocation();
+  const mapRef = useRef<MapView>(null);
+
+  const [memberLocations, setMemberLocations] = useState<Record<string, Location>>({});
+  const [selectedMember, setSelectedMember]   = useState<FamilyMember | null>(null);
+
+  // Centrer la carte sur la position actuelle
+  useEffect(() => {
+    if (currentLocation && mapRef.current) {
+      mapRef.current.animateToRegion({
+        latitude: currentLocation.coords.latitude,
+        longitude: currentLocation.coords.longitude,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      }, 500);
+    }
+  }, [currentLocation]);
+
+  // Abonnement temps réel aux positions des membres de la famille
+  useEffect(() => {
+    if (!user || members.length === 0) return;
+
+    const memberIds = members.map(m => m.id);
+
+    // Chargement initial
+    supabase
+      .from('locations')
+      .select('*')
+      .in('user_id', memberIds)
+      .then(({ data }) => {
+        if (!data) return;
+        const map: Record<string, Location> = {};
+        data.forEach(loc => { map[loc.user_id] = loc; });
+        setMemberLocations(map);
+      });
+
+    // Abonnement Realtime PostgreSQL Changes
+    const channel = supabase
+      .channel('family_locations_realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'locations',
+          filter: `user_id=in.(${memberIds.join(',')})`,
+        },
+        payload => {
+          if (payload.eventType === 'DELETE') {
+            setMemberLocations(prev => {
+              const next = { ...prev };
+              delete next[(payload.old as Location).user_id];
+              return next;
+            });
+          } else {
+            const loc = payload.new as Location;
+            setMemberLocations(prev => ({ ...prev, [loc.user_id]: loc }));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user, members]);
+
+  async function handleTrackingToggle(value: boolean) {
+    if (value) {
+      const ok = await enableTracking();
+      if (!ok) Alert.alert('Permission refusée', 'Activez la localisation dans les paramètres.');
+    } else {
+      await disableTracking();
+    }
+  }
+
+  function focusMember(member: FamilyMember) {
+    const loc = memberLocations[member.id];
+    if (!loc) {
+      Alert.alert('Position inconnue', `${member.full_name ?? member.email} n'a pas encore partagé sa position.`);
+      return;
+    }
+    setSelectedMember(member);
+    mapRef.current?.animateToRegion({
+      latitude: loc.latitude,
+      longitude: loc.longitude,
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
+    }, 600);
+  }
+
+  function formatTime(isoString: string) {
+    const d = new Date(isoString);
+    const diff = Date.now() - d.getTime();
+    if (diff < 60_000) return 'À l\'instant';
+    if (diff < 3_600_000) return `Il y a ${Math.floor(diff / 60_000)} min`;
+    return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  if (permissionDenied) {
+    return (
+      <View className="flex-1 items-center justify-center px-6">
+        <Text className="text-5xl mb-4">📍</Text>
+        <Text className="text-xl font-bold text-gray-800 mb-2">Permission requise</Text>
+        <Text className="text-gray-500 text-center">
+          Activez la localisation dans les paramètres de votre appareil pour utiliser FamilyLocator.
+        </Text>
+      </View>
+    );
+  }
+
+  const defaultRegion: Region = {
+    latitude: 48.8566,
+    longitude: 2.3522,
+    latitudeDelta: 0.1,
+    longitudeDelta: 0.1,
+  };
+
+  return (
+    <View className="flex-1">
+      {/* Carte principale */}
+      <MapView
+        ref={mapRef}
+        className="flex-1"
+        provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+        initialRegion={
+          currentLocation
+            ? {
+                latitude: currentLocation.coords.latitude,
+                longitude: currentLocation.coords.longitude,
+                latitudeDelta: 0.02,
+                longitudeDelta: 0.02,
+              }
+            : defaultRegion
+        }
+        showsUserLocation
+        showsMyLocationButton={false}
+        showsCompass
+      >
+        {/* Marqueurs des membres de la famille */}
+        {members.map((member, idx) => {
+          const loc = memberLocations[member.id];
+          if (!loc) return null;
+          const color = MEMBER_COLORS[idx % MEMBER_COLORS.length];
+          return (
+            <Marker
+              key={member.id}
+              coordinate={{ latitude: loc.latitude, longitude: loc.longitude }}
+              onPress={() => setSelectedMember(member)}
+            >
+              <View
+                className="items-center justify-center rounded-full border-2 border-white shadow"
+                style={{ width: 44, height: 44, backgroundColor: color }}
+              >
+                <Text className="text-white font-bold text-base">
+                  {(member.full_name ?? member.email ?? '?')[0].toUpperCase()}
+                </Text>
+              </View>
+            </Marker>
+          );
+        })}
+      </MapView>
+
+      {/* Panneau de contrôle — bas de l'écran */}
+      <View className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-lg px-4 pt-4 pb-8">
+        {/* Toggle partage de position */}
+        <View className="flex-row items-center justify-between mb-4 pb-4 border-b border-gray-100">
+          <View>
+            <Text className="font-semibold text-gray-800">Partager ma position</Text>
+            <Text className="text-xs text-gray-400">
+              {tracking ? 'Mise à jour toutes les 5 minutes' : 'Désactivé'}
+            </Text>
+          </View>
+          <Switch
+            value={tracking}
+            onValueChange={handleTrackingToggle}
+            trackColor={{ false: '#d1d5db', true: '#1e40af' }}
+            thumbColor="white"
+          />
+        </View>
+
+        {/* Info membre sélectionné */}
+        {selectedMember && (
+          <View className="bg-primary-50 rounded-2xl px-4 py-3 mb-3 border border-primary-100">
+            <View className="flex-row items-center justify-between">
+              <Text className="font-semibold text-primary-800">
+                {selectedMember.full_name ?? selectedMember.email}
+              </Text>
+              <TouchableOpacity onPress={() => setSelectedMember(null)}>
+                <Text className="text-gray-400 text-lg">✕</Text>
+              </TouchableOpacity>
+            </View>
+            {memberLocations[selectedMember.id] && (
+              <Text className="text-xs text-primary-600 mt-1">
+                Dernière position : {formatTime(memberLocations[selectedMember.id].updated_at)}
+              </Text>
+            )}
+          </View>
+        )}
+
+        {/* Liste des membres scrollable */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {members.map((member, idx) => {
+            const hasLoc = !!memberLocations[member.id];
+            const color = MEMBER_COLORS[idx % MEMBER_COLORS.length];
+            return (
+              <TouchableOpacity
+                key={member.id}
+                className="items-center mr-4"
+                onPress={() => focusMember(member)}
+              >
+                <View
+                  className="w-12 h-12 rounded-full items-center justify-center border-2"
+                  style={{
+                    backgroundColor: hasLoc ? color : '#e5e7eb',
+                    borderColor: selectedMember?.id === member.id ? '#1e40af' : 'transparent',
+                  }}
+                >
+                  <Text className="text-white font-bold">
+                    {(member.full_name ?? member.email ?? '?')[0].toUpperCase()}
+                  </Text>
+                </View>
+                <Text className="text-xs text-gray-600 mt-1 text-center" numberOfLines={1}>
+                  {(member.full_name ?? member.email ?? '').split(' ')[0]}
+                </Text>
+                <View
+                  className="w-2 h-2 rounded-full mt-0.5"
+                  style={{ backgroundColor: hasLoc ? '#22c55e' : '#d1d5db' }}
+                />
+              </TouchableOpacity>
+            );
+          })}
+          {members.length === 0 && (
+            <Text className="text-gray-400 text-sm py-3">
+              Aucun membre — ajoutez votre famille via l'onglet Famille
+            </Text>
+          )}
+        </ScrollView>
+      </View>
+    </View>
+  );
+}

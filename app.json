@@ -1,0 +1,78 @@
+{
+  "expo": {
+    "name": "FamilyLocator",
+    "slug": "family-locator",
+    "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "familylocator",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1e40af"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#1e40af",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "FamilyLocator utilise votre position pour la partager en temps réel avec les membres de votre famille que vous avez autorisés.",
+          "locationAlwaysPermission": "FamilyLocator a besoin d'accéder à votre position en arrière-plan pour continuer le suivi même lorsque l'application est fermée.",
+          "locationWhenInUsePermission": "FamilyLocator utilise votre position pour l'afficher sur la carte familiale.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
+    ],
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1e40af"
+      },
+      "package": "com.familylocator.app",
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "RECEIVE_NOTIFICATIONS"
+      ],
+      "googleServicesFile": "./google-services.json"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.familylocator.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location",
+          "fetch",
+          "remote-notification"
+        ],
+        "NSLocationAlwaysUsageDescription": "FamilyLocator surveille votre position en arrière-plan pour la partager en temps réel avec votre famille. Votre position n'est jamais partagée sans votre consentement explicite.",
+        "NSLocationWhenInUseUsageDescription": "FamilyLocator utilise votre position pour l'afficher sur la carte familiale et la partager avec les membres que vous avez approuvés.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "FamilyLocator utilise votre position, même en arrière-plan, pour assurer un suivi continu et la sécurité de votre famille."
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    }
+  }
+}
