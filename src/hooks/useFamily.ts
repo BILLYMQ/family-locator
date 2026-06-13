@@ -1,6 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { FamilyMember, FamilyBond } from '@/types/database';
+import { FamilyMember, FamilyBond, Profile } from '@/types/database';
+
+// Type local pour la query JOIN avec profils imbriqués
+type BondWithProfiles = {
+  id: string;
+  parent_id: string;
+  child_id: string;
+  status: FamilyBond['status'];
+  parent: Pick<Profile, 'id' | 'full_name' | 'email' | 'phone' | 'avatar_url'> | null;
+  child:  Pick<Profile, 'id' | 'full_name' | 'email' | 'phone' | 'avatar_url'> | null;
+};
 
 export function useFamily(currentUserId: string | undefined) {
   const [members, setMembers]           = useState<FamilyMember[]>([]);
@@ -11,8 +21,9 @@ export function useFamily(currentUserId: string | undefined) {
     if (!currentUserId) return;
     setLoading(true);
 
-    // Membres acceptés (bidirectionnel)
-    const { data: bonds } = await supabase
+    // Membres acceptés (bidirectionnel) — cast explicite car Supabase TS ne résout
+    // pas les alias de jointure !fkey dans le select générique
+    const { data: rawBonds } = await supabase
       .from('family_bonds')
       .select(`
         id,
@@ -25,12 +36,14 @@ export function useFamily(currentUserId: string | undefined) {
       .or(`parent_id.eq.${currentUserId},child_id.eq.${currentUserId}`)
       .eq('status', 'accepted');
 
-    const memberList: FamilyMember[] = (bonds ?? []).map(bond => {
+    const bonds: BondWithProfiles[] = (rawBonds as BondWithProfiles[] | null) ?? [];
+
+    const memberList: FamilyMember[] = bonds.map(bond => {
       const isParent = bond.parent_id === currentUserId;
-      const profile = isParent ? bond.child : bond.parent;
+      const profile  = isParent ? bond.child : bond.parent;
       return {
-        ...(profile as any),
-        bond_id: bond.id,
+        ...(profile as Profile),
+        bond_id:    bond.id,
         bond_status: bond.status,
       };
     });
@@ -47,12 +60,18 @@ export function useFamily(currentUserId: string | undefined) {
     setLoading(false);
   }, [currentUserId]);
 
+  // Fetch initial et à chaque changement de fetchFamily
   useEffect(() => {
     fetchFamily();
+  }, [fetchFamily]);
 
-    // Abonnement temps réel sur les liens familiaux
+  // Souscription realtime — dépend uniquement de currentUserId pour éviter
+  // de rappeler .on() sur un channel déjà souscrit (erreur Supabase JS)
+  useEffect(() => {
+    if (!currentUserId) return;
+
     const channel = supabase
-      .channel('family_bonds_changes')
+      .channel(`family_bonds_${currentUserId}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'family_bonds' },
@@ -61,7 +80,7 @@ export function useFamily(currentUserId: string | undefined) {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [fetchFamily]);
+  }, [currentUserId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function sendInvitation(targetEmail: string) {
     if (!currentUserId) return { error: new Error('Non connecté') };

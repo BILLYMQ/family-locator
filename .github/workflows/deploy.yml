@@ -1,0 +1,69 @@
+name: 🚀 Deploy FamilyLocator
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Déclenchement manuel possible depuis l'onglet Actions
+
+# Permissions nécessaires pour GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Une seule déployée à la fois ; annule les anciennes
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # ── Job 1 : Build ─────────────────────────────────────────────────────────
+  build:
+    name: Build Expo Web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v4
+
+      - name: Build Expo web
+        env:
+          # Secrets Supabase définis dans Settings → Secrets → Actions
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Chemin de base auto-détecté (/family-locator si repo = family-locator)
+          EXPO_BASE_URL: ${{ steps.pages.outputs.base_path }}
+        run: npx expo export --platform web
+
+      - name: Add .nojekyll (pour que GitHub Pages serve les dossiers _expo/)
+        run: touch dist/.nojekyll
+
+      - name: Upload artifact Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  # ── Job 2 : Deploy ────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to GitHub Pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

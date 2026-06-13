@@ -2,12 +2,25 @@ node_modules/
 .expo/
 dist/
 web-build/
+
+# Variables d'environnement (JAMAIS commitées)
 .env
+.env.local
+.env*.local
+
+# Secrets mobiles
 *.jks
 *.p8
 *.p12
 *.key
 *.mobileprovision
+*.pem
 *.orig.*
+google-services.json
+GoogleService-Info.plist
 android/
 ios/
+
+# OS / éditeurs
+.DS_Store
+Thumbs.db

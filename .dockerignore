@@ -1,0 +1,10 @@
+node_modules
+dist
+.expo
+.git
+.github
+.env
+.env.local
+*.md
+google-services.json
+GoogleService-Info.plist

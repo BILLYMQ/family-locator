@@ -1,11 +1,12 @@
+import './global.css';
 import 'react-native-url-polyfill/auto';
 import React from 'react';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import RootNavigator from '@/navigation/AppNavigator';
 
 export default function App() {
   return (
-    <SafeAreaProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <RootNavigator />
     </SafeAreaProvider>
   );
