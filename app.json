@@ -3,9 +3,6 @@
     "name": "FamilyLocator",
     "slug": "family-locator",
     "version": "1.0.0",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "familylocator",
@@ -42,7 +39,6 @@
         "backgroundColor": "#1e40af"
       },
       "package": "com.familylocator.app",
-      "versionCode": 1,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
