@@ -10,8 +10,8 @@ type BondWithProfiles = {
   child_id: string;
   status: FamilyBond['status'];
   created_at: string;
-  parent: Pick<Profile, 'id' | 'full_name' | 'email' | 'phone' | 'avatar_url'> | null;
-  child:  Pick<Profile, 'id' | 'full_name' | 'email' | 'phone' | 'avatar_url'> | null;
+  parent: Pick<Profile, 'id' | 'full_name' | 'email' | 'phone' | 'avatar_url' | 'status_text'> | null;
+  child:  Pick<Profile, 'id' | 'full_name' | 'email' | 'phone' | 'avatar_url' | 'status_text'> | null;
 };
 
 // Bond en attente enrichi avec les infos de l'autre utilisateur
@@ -38,8 +38,8 @@ export function useFamily(currentUserId: string | undefined) {
       .from('family_bonds')
       .select(`
         id, parent_id, child_id, status, created_at,
-        parent:profiles!family_bonds_parent_id_fkey(id, full_name, email, phone, avatar_url),
-        child:profiles!family_bonds_child_id_fkey(id, full_name, email, phone, avatar_url)
+        parent:profiles!family_bonds_parent_id_fkey(id, full_name, email, phone, avatar_url, status_text),
+        child:profiles!family_bonds_child_id_fkey(id, full_name, email, phone, avatar_url, status_text)
       `)
       .or(`parent_id.eq.${currentUserId},child_id.eq.${currentUserId}`)
       .eq('status', 'accepted');

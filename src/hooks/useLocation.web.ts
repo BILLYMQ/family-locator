@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
-// Interface compatible avec Location.LocationObject d'expo-location
 export interface WebLocationObject {
   coords: {
     latitude: number;
@@ -24,8 +23,10 @@ export function useLocation() {
   const [currentLocation,  setCurrentLocation]  = useState<WebLocationObject | null>(null);
   const [tracking,         setTracking]          = useState(false);
   const [permissionDenied, setPermissionDenied]  = useState(false);
-  const watchIdRef  = useRef<number | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [trackingUntil,    setTrackingUntil]     = useState<Date | null>(null);
+  const watchIdRef   = useRef<number | null>(null);
+  const intervalRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoStopRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Surveillance continue (mise à jour de l'état local uniquement) ─────────
   useEffect(() => {
@@ -33,35 +34,27 @@ export function useLocation() {
       setPermissionDenied(true);
       return;
     }
-
     const watchId = navigator.geolocation.watchPosition(
       pos => setCurrentLocation(posToObj(pos)),
       err => { if (err.code === GeolocationPositionError.PERMISSION_DENIED) setPermissionDenied(true); },
       { enableHighAccuracy: true, timeout: 15_000, maximumAge: 10_000 }
     );
-
     watchIdRef.current = watchId;
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
-  // ── Mise à jour ponctuelle (lecture fraîche + UPSERT Supabase) ─────────────
-  // Utilise getCurrentPosition() plutôt que le cache de watchPosition,
-  // ce qui garantit une coordonnée fraîche même si watchPosition n'a pas encore
-  // répondu (première ouverture de l'onglet Carte).
+  // ── Mise à jour ponctuelle ────────────────────────────────────────────────
   async function pushLocation(): Promise<PushResult> {
     if (!('geolocation' in navigator)) {
       return { success: false, error: 'Géolocalisation non supportée par ce navigateur' };
     }
-
     return new Promise(resolve => {
       navigator.geolocation.getCurrentPosition(
         async pos => {
           const loc = posToObj(pos);
-          setCurrentLocation(loc); // mise à jour de l'état local
-
+          setCurrentLocation(loc);
           const { data: { user } } = await supabase.auth.getUser();
           if (!user) { resolve({ success: false, error: 'Non connecté' }); return; }
-
           const { error } = await supabase.from('locations').upsert(
             {
               user_id:    user.id,
@@ -72,7 +65,6 @@ export function useLocation() {
             },
             { onConflict: 'user_id' }
           );
-
           resolve(error ? { success: false, error: error.message } : { success: true });
         },
         err => resolve({ success: false, error: err.message }),
@@ -82,19 +74,46 @@ export function useLocation() {
   }
 
   // ── Suivi continu (tracking toutes les 5 min) ─────────────────────────────
-  async function enableTracking(): Promise<boolean> {
+  // durationMs : durée en ms. Absent = suivi illimité.
+  async function enableTracking(durationMs?: number): Promise<boolean> {
     if (!('geolocation' in navigator)) return false;
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    if (autoStopRef.current) { clearTimeout(autoStopRef.current);  autoStopRef.current = null; }
     setTracking(true);
-    await pushLocation(); // envoi immédiat
+    await pushLocation();
     intervalRef.current = setInterval(pushLocation, 5 * 60 * 1000);
+
+    if (durationMs && durationMs > 0) {
+      const until = new Date(Date.now() + durationMs);
+      setTrackingUntil(until);
+
+      // Persiste la date dans profiles pour affichage multi-onglets
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        supabase.from('profiles')
+          .update({ tracking_until: until.toISOString() })
+          .eq('id', user.id)
+          .then(() => {});
+      }
+
+      if (autoStopRef.current) clearTimeout(autoStopRef.current);
+      autoStopRef.current = setTimeout(() => disableTracking(), durationMs);
+    }
     return true;
   }
 
   async function disableTracking(): Promise<void> {
     setTracking(false);
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    setTrackingUntil(null);
+    if (intervalRef.current)  { clearInterval(intervalRef.current);  intervalRef.current  = null; }
+    if (autoStopRef.current)  { clearTimeout(autoStopRef.current);   autoStopRef.current  = null; }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      supabase.from('profiles')
+        .update({ tracking_until: null })
+        .eq('id', user.id)
+        .then(() => {});
     }
   }
 
@@ -102,13 +121,13 @@ export function useLocation() {
     currentLocation,
     tracking,
     permissionDenied,
+    trackingUntil,
     enableTracking,
     disableTracking,
-    pushLocation,   // ← exposé pour le bouton "Mettre à jour ma position"
+    pushLocation,
   };
 }
 
-// ── Helper ────────────────────────────────────────────────────────────────────
 function posToObj(pos: GeolocationPosition): WebLocationObject {
   return {
     coords: {

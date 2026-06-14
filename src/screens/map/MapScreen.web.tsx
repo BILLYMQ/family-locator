@@ -21,7 +21,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useFamily } from '@/hooks/useFamily';
 import { useLocation } from '@/hooks/useLocation.web';
 import { reverseGeocode } from '@/lib/geocoding';
-import { FamilyMember, Location } from '@/types/database';
+import { FamilyMember, Location, LocationHistory } from '@/types/database';
 
 // ── Constantes ────────────────────────────────────────────────────────────────
 const COLORS: string[]                = ['#6366f1', '#06b6d4', '#f59e0b', '#ec4899', '#84cc16', '#f97316'];
@@ -164,6 +164,7 @@ export default function MapScreen() {
   const mapRef            = useRef<L.Map | null>(null);
   const userMarkerRef     = useRef<L.Marker | null>(null);
   const memberMarkersRef  = useRef<Record<string, L.Marker>>({});
+  const historyLayerRef   = useRef<L.Polyline | null>(null);
 
   // ── État ──────────────────────────────────────────────────────────────────
   const [mapSize, setMapSize]             = useState({ w: 0, h: 0 });
@@ -175,6 +176,7 @@ export default function MapScreen() {
   const [onlineCount,     setOnlineCount]     = useState(0);
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
   const [sosState,        setSosState]        = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [showingHistory,  setShowingHistory]  = useState(false);
 
   const userCenter: [number, number] | null = currentLocation
     ? [currentLocation.coords.latitude, currentLocation.coords.longitude]
@@ -240,9 +242,43 @@ export default function MapScreen() {
     return () => { cancelled = true; };
   }, [mapSize]);
 
+  // ── Historique du trajet ──────────────────────────────────────────────────
+  function clearHistory() {
+    if (historyLayerRef.current) {
+      historyLayerRef.current.remove();
+      historyLayerRef.current = null;
+    }
+    setShowingHistory(false);
+  }
+
+  async function fetchAndDrawHistory(memberId: string) {
+    if (!mapRef.current) return;
+    const { data } = await supabase
+      .from('location_history')
+      .select('latitude, longitude, recorded_at')
+      .eq('user_id', memberId)
+      .order('recorded_at', { ascending: true })
+      .limit(200);
+
+    const rows = (data as Pick<LocationHistory, 'latitude' | 'longitude' | 'recorded_at'>[] | null) ?? [];
+    if (rows.length < 2 || !mapRef.current) return;
+
+    clearHistory();
+    const latlngs: [number, number][] = rows.map(p => [p.latitude, p.longitude]);
+    historyLayerRef.current = L.polyline(latlngs, {
+      color: '#6366f1', weight: 4, opacity: 0.8,
+    }).addTo(mapRef.current);
+    mapRef.current.fitBounds(historyLayerRef.current.getBounds(), { padding: [50, 50] });
+    setShowingHistory(true);
+  }
+
+  // Efface la polyline si l'on change de membre ou si l'on ferme le panneau
+  useEffect(() => { clearHistory(); }, [selectedMember?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Nettoyage à l'unmount ─────────────────────────────────────────────────
   useEffect(() => {
     return () => {
+      historyLayerRef.current?.remove();
       Object.values(memberMarkersRef.current).forEach(m => m.remove());
       memberMarkersRef.current = {};
       userMarkerRef.current?.remove();
@@ -599,6 +635,11 @@ export default function MapScreen() {
                 <Text style={{ color: 'rgba(255,255,255,.35)', fontSize: 16 }}>✕</Text>
               </TouchableOpacity>
             </View>
+            {selectedMember.status_text ? (
+              <Text style={{ fontSize: 11, color: 'rgba(165,180,252,.75)', marginTop: 2, fontStyle: 'italic' }}>
+                {selectedMember.status_text}
+              </Text>
+            ) : null}
             {memberLocations[selectedMember.id] && (
               <Text style={{ fontSize: 11, color: 'rgba(165,180,252,.6)', marginTop: 2 }}>
                 🕐 {formatTime(memberLocations[selectedMember.id].updated_at)}
@@ -608,6 +649,42 @@ export default function MapScreen() {
               <Text style={{ fontSize: 11, color: 'rgba(165,180,252,.5)', marginTop: 2 }} numberOfLines={1}>
                 📍 {selectedAddress}
               </Text>
+            )}
+            {/* Actions — Y aller + Voir le trajet */}
+            {memberLocations[selectedMember.id] && (
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    const loc = memberLocations[selectedMember.id];
+                    window.open(
+                      `https://www.google.com/maps/dir/?api=1&destination=${loc.latitude},${loc.longitude}`,
+                      '_blank'
+                    );
+                  }}
+                  style={{
+                    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: 'rgba(59,130,246,.15)', borderRadius: 10, paddingVertical: 7,
+                    borderWidth: 1, borderColor: 'rgba(59,130,246,.3)',
+                  }}
+                >
+                  <Text style={{ fontSize: 13, marginRight: 4 }}>🗺️</Text>
+                  <Text style={{ fontSize: 12, color: '#93c5fd', fontWeight: '600' }}>Y aller</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => showingHistory ? clearHistory() : fetchAndDrawHistory(selectedMember.id)}
+                  style={{
+                    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: showingHistory ? 'rgba(99,102,241,.25)' : 'rgba(99,102,241,.1)',
+                    borderRadius: 10, paddingVertical: 7,
+                    borderWidth: 1, borderColor: showingHistory ? 'rgba(99,102,241,.6)' : 'rgba(99,102,241,.3)',
+                  }}
+                >
+                  <Text style={{ fontSize: 13, marginRight: 4 }}>📍</Text>
+                  <Text style={{ fontSize: 12, color: '#a5b4fc', fontWeight: '600' }}>
+                    {showingHistory ? 'Masquer' : 'Voir le trajet'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         )}
@@ -640,6 +717,11 @@ export default function MapScreen() {
                     <Text style={{ fontSize: 9, color: status.color, fontWeight: '600' }}>{status.label}</Text>
                   ) : null}
                 </View>
+                {member.status_text ? (
+                  <Text style={{ fontSize: 9, color: 'rgba(255,255,255,.38)', marginTop: 1, fontStyle: 'italic' }} numberOfLines={1}>
+                    {member.status_text}
+                  </Text>
+                ) : null}
               </TouchableOpacity>
             );
           })}

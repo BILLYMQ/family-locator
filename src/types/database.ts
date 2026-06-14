@@ -12,6 +12,8 @@ export interface Database {
           avatar_url: string | null;
           push_token: string | null;
           sos_sent_at: string | null;
+          status_text: string | null;
+          tracking_until: string | null;
           created_at: string;
         };
         Insert: {
@@ -22,6 +24,8 @@ export interface Database {
           avatar_url?: string | null;
           push_token?: string | null;
           sos_sent_at?: string | null;
+          status_text?: string | null;
+          tracking_until?: string | null;
           created_at?: string;
         };
         Update: {
@@ -32,6 +36,8 @@ export interface Database {
           avatar_url?: string | null;
           push_token?: string | null;
           sos_sent_at?: string | null;
+          status_text?: string | null;
+          tracking_until?: string | null;
         };
         Relationships: [];
       };
@@ -101,6 +107,28 @@ export interface Database {
           }
         ];
       };
+      location_history: {
+        Row: {
+          id: string;
+          user_id: string;
+          latitude: number;
+          longitude: number;
+          accuracy: number | null;
+          recorded_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          latitude: number;
+          longitude: number;
+          accuracy?: number | null;
+          recorded_at?: string;
+        };
+        Update: {
+          accuracy?: number | null;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -129,9 +157,10 @@ export interface Database {
 }
 
 // Helpers de types pour l'utilisation dans l'app
-export type Profile    = Database['public']['Tables']['profiles']['Row'];
-export type Location   = Database['public']['Tables']['locations']['Row'];
-export type FamilyBond = Database['public']['Tables']['family_bonds']['Row'];
+export type Profile         = Database['public']['Tables']['profiles']['Row'];
+export type Location        = Database['public']['Tables']['locations']['Row'];
+export type FamilyBond      = Database['public']['Tables']['family_bonds']['Row'];
+export type LocationHistory = Database['public']['Tables']['location_history']['Row'];
 
 export interface FamilyMember extends Profile {
   bond_id: string;

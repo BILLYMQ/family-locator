@@ -91,7 +91,7 @@ export function useAuth() {
     await supabase.auth.signOut();
   }
 
-  async function updateProfile(updates: Partial<Pick<Profile, 'full_name' | 'phone' | 'avatar_url'>>) {
+  async function updateProfile(updates: Partial<Pick<Profile, 'full_name' | 'phone' | 'avatar_url' | 'status_text' | 'tracking_until'>>) {
     if (!state.user) return { error: new Error('Non connecté') };
     const { data, error } = await supabase
       .from('profiles')
