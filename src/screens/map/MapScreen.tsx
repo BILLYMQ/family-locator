@@ -19,13 +19,15 @@ import { FamilyMember, Location } from '@/types/database';
 const MEMBER_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4'];
 
 export default function MapScreen() {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const { members } = useFamily(user?.id);
-  const { currentLocation, tracking, permissionDenied, enableTracking, disableTracking } = useLocation();
+  const { currentLocation, tracking, permissionDenied, enableTracking, disableTracking, pushLocation } = useLocation();
   const mapRef = useRef<MapView>(null);
 
   const [memberLocations, setMemberLocations] = useState<Record<string, Location>>({});
-  const [selectedMember, setSelectedMember]   = useState<FamilyMember | null>(null);
+  const [selectedMember,  setSelectedMember]  = useState<FamilyMember | null>(null);
+  const [pushing,         setPushing]         = useState(false);
+  const [pushMsg,         setPushMsg]         = useState<{ ok: boolean; text: string } | null>(null);
 
   // Centrer la carte sur la position actuelle
   useEffect(() => {
@@ -57,9 +59,9 @@ export default function MapScreen() {
         setMemberLocations(map);
       });
 
-    // Abonnement Realtime PostgreSQL Changes
+    // Abonnement Realtime — nom unique pour éviter les collisions (StrictMode/reconnexion)
     const channel = supabase
-      .channel('family_locations_realtime')
+      .channel(`map_locs_${Date.now()}`)
       .on(
         'postgres_changes',
         {
@@ -85,6 +87,19 @@ export default function MapScreen() {
 
     return () => { supabase.removeChannel(channel); };
   }, [user, members]);
+
+  async function handlePushLocation() {
+    if (pushing) return;
+    setPushing(true);
+    setPushMsg(null);
+    const r = await pushLocation();
+    setPushing(false);
+    setPushMsg(r.success
+      ? { ok: true,  text: '✓ Position envoyée !' }
+      : { ok: false, text: r.error ?? 'Erreur' }
+    );
+    setTimeout(() => setPushMsg(null), 4000);
+  }
 
   async function handleTrackingToggle(value: boolean) {
     if (value) {
@@ -185,8 +200,8 @@ export default function MapScreen() {
       {/* Panneau de contrôle — bas de l'écran */}
       <View className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-lg px-4 pt-4 pb-8">
         {/* Toggle partage de position */}
-        <View className="flex-row items-center justify-between mb-4 pb-4 border-b border-gray-100">
-          <View>
+        <View className="flex-row items-center justify-between mb-3 pb-3 border-b border-gray-100">
+          <View className="flex-1 mr-3">
             <Text className="font-semibold text-gray-800">Partager ma position</Text>
             <Text className="text-xs text-gray-400">
               {tracking ? 'Mise à jour toutes les 5 minutes' : 'Désactivé'}
@@ -199,6 +214,34 @@ export default function MapScreen() {
             thumbColor="white"
           />
         </View>
+
+        {/* Bouton envoi ponctuel */}
+        <TouchableOpacity
+          onPress={handlePushLocation}
+          disabled={pushing}
+          className="flex-row items-center justify-center rounded-xl py-2.5 mb-3"
+          style={{ backgroundColor: pushing ? '#e0e7ff' : '#eef2ff', borderWidth: 1, borderColor: pushing ? '#a5b4fc' : '#c7d2fe' }}
+        >
+          <Text className="text-base mr-2">{pushing ? '⏳' : '📍'}</Text>
+          <Text className="font-semibold text-indigo-700 text-sm">
+            {pushing ? 'Envoi en cours…' : 'Mettre à jour ma position'}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Feedback push */}
+        {pushMsg && (
+          <View
+            className="rounded-xl px-3 py-2 mb-2"
+            style={{ backgroundColor: pushMsg.ok ? '#dcfce7' : '#fee2e2' }}
+          >
+            <Text
+              className="text-xs font-semibold text-center"
+              style={{ color: pushMsg.ok ? '#166534' : '#991b1b' }}
+            >
+              {pushMsg.text}
+            </Text>
+          </View>
+        )}
 
         {/* Info membre sélectionné */}
         {selectedMember && (

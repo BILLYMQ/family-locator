@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import * as Location from 'expo-location';
+import { supabase } from '@/lib/supabase';
 import { startLocationTracking, stopLocationTracking, pushCurrentLocation } from '@/tasks/locationTask';
 
 export function useLocation() {
@@ -44,5 +45,16 @@ export function useLocation() {
     setTracking(false);
   }
 
-  return { currentLocation, tracking, permissionDenied, enableTracking, disableTracking };
+  async function pushLocation(): Promise<{ success: boolean; error?: string }> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: 'Non connecté' };
+    try {
+      await pushCurrentLocation();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Erreur inconnue' };
+    }
+  }
+
+  return { currentLocation, tracking, permissionDenied, enableTracking, disableTracking, pushLocation };
 }

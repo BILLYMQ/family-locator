@@ -23,10 +23,19 @@ export default function ProfileScreen() {
   const [editing, setEditing]   = useState(false);
 
   async function handleSave() {
+    // Normalise le téléphone pour correspondre au format stocké et cherché
+    const cleanedPhone = phone.trim().replace(/[\s\(\)\-\.]/g, '') || undefined;
+    if (cleanedPhone) {
+      const digits = cleanedPhone.replace(/\D/g, '');
+      if (digits.length < 8) {
+        Alert.alert('Erreur', 'Numéro de téléphone invalide (ex : +1 418 000 0000).');
+        return;
+      }
+    }
     setSaving(true);
     const { error } = await updateProfile({
       full_name: fullName.trim() || undefined,
-      phone: phone.trim() || undefined,
+      phone: cleanedPhone,
     });
     setSaving(false);
     if (error) {

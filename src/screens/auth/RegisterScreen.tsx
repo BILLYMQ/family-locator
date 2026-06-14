@@ -17,7 +17,7 @@ interface Props {
 }
 
 export default function RegisterScreen({ onNavigateToLogin }: Props) {
-  const { signUp, updateProfile } = useAuth();
+  const { signUp } = useAuth();
   const [fullName, setFullName]   = useState('');
   const [email, setEmail]         = useState('');
   const [phone, setPhone]         = useState('');
@@ -39,17 +39,29 @@ export default function RegisterScreen({ onNavigateToLogin }: Props) {
       return;
     }
 
+    // Nettoyage : supprime espaces, tirets, parenthèses et points
+    const cleanedPhone = phone.trim().replace(/[\s\(\)\-\.]/g, '');
+    if (cleanedPhone) {
+      const digits = cleanedPhone.replace(/\D/g, '');
+      if (digits.length < 8) {
+        Alert.alert('Erreur', 'Numéro de téléphone invalide (ex : +1 418 000 0000).');
+        return;
+      }
+    }
+
     setLoading(true);
-    const { error } = await signUp(email.trim().toLowerCase(), password, fullName.trim());
+    const { error } = await signUp(
+      email.trim().toLowerCase(),
+      password,
+      fullName.trim(),
+      cleanedPhone || undefined,
+    );
+    setLoading(false);
+
     if (error) {
-      setLoading(false);
       Alert.alert('Inscription échouée', error.message);
       return;
     }
-    if (phone.trim()) {
-      await updateProfile({ phone: phone.trim() });
-    }
-    setLoading(false);
     Alert.alert(
       'Vérifiez votre email',
       'Un lien de confirmation a été envoyé à ' + email.trim(),

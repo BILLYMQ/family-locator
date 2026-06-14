@@ -100,7 +100,14 @@ export interface Database {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      search_profile_by_email: {
+        Args: { p_email: string };
+        Returns: Array<{ id: string; full_name: string | null }>;
+      };
+      search_profile_by_phone: {
+        Args: { p_phone: string };
+        Returns: Array<{ id: string; full_name: string | null }>;
+      };
     };
     Enums: {
       bond_status: 'pending' | 'accepted' | 'rejected';

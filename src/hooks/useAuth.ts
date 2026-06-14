@@ -45,12 +45,17 @@ export function useAuth() {
     setState(prev => ({ ...prev, profile: data ?? null, loading: false }));
   }
 
-  async function signUp(email: string, password: string, fullName: string) {
-    const { error } = await supabase.auth.signUp({
+  async function signUp(email: string, password: string, fullName: string, phone?: string) {
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName } },
+      options: { data: { full_name: fullName, ...(phone ? { phone } : {}) } },
     });
+    // Écriture directe dans profiles avec l'ID retourné (fonctionne même si la session
+    // n'est pas encore active, ex. : confirmation email requise).
+    if (!error && data.user?.id && phone) {
+      await supabase.from('profiles').update({ phone }).eq('id', data.user.id);
+    }
     return { error };
   }
 
