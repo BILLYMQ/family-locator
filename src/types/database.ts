@@ -10,6 +10,8 @@ export interface Database {
           phone: string | null;
           full_name: string | null;
           avatar_url: string | null;
+          push_token: string | null;
+          sos_sent_at: string | null;
           created_at: string;
         };
         Insert: {
@@ -18,6 +20,8 @@ export interface Database {
           phone?: string | null;
           full_name?: string | null;
           avatar_url?: string | null;
+          push_token?: string | null;
+          sos_sent_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -26,6 +30,8 @@ export interface Database {
           phone?: string | null;
           full_name?: string | null;
           avatar_url?: string | null;
+          push_token?: string | null;
+          sos_sent_at?: string | null;
         };
         Relationships: [];
       };
@@ -107,6 +113,10 @@ export interface Database {
       search_profile_by_phone: {
         Args: { p_phone: string };
         Returns: Array<{ id: string; full_name: string | null }>;
+      };
+      trigger_sos: {
+        Args: { p_user_id: string };
+        Returns: Array<{ member_id: string; push_token: string | null; full_name: string | null }>;
       };
     };
     Enums: {

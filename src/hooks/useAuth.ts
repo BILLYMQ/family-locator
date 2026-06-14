@@ -3,6 +3,29 @@ import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { Profile } from '@/types/database';
 
+function translateAuthError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes('rate limit') || m.includes('email rate limit')) {
+    return `Trop de tentatives d'inscription ont été faites récemment. Veuillez patienter environ une heure avant de réessayer.`;
+  }
+  if (m.includes('user already registered') || m.includes('already registered')) {
+    return `Un compte existe déjà avec cette adresse email. Essayez de vous connecter.`;
+  }
+  if (m.includes('email not confirmed')) {
+    return `Votre adresse email n'a pas encore été confirmée. Vérifiez votre boîte de réception.`;
+  }
+  if (m.includes('invalid login credentials')) {
+    return `Email ou mot de passe incorrect.`;
+  }
+  if (m.includes('password should be at least')) {
+    return `Le mot de passe doit contenir au moins 6 caractères.`;
+  }
+  if (m.includes('signup is disabled') || m.includes('signups not allowed')) {
+    return `Les inscriptions sont temporairement désactivées. Réessayez plus tard.`;
+  }
+  return message;
+}
+
 interface AuthState {
   session: Session | null;
   user: User | null;
@@ -56,7 +79,7 @@ export function useAuth() {
     if (!error && data.user?.id && phone) {
       await supabase.from('profiles').update({ phone }).eq('id', data.user.id);
     }
-    return { error };
+    return { error: error ? new Error(translateAuthError(error.message)) : null };
   }
 
   async function signIn(email: string, password: string) {

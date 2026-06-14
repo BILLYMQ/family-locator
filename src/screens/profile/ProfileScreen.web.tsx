@@ -1,24 +1,64 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   ActivityIndicator, ScrollView, Switch,
 } from 'react-native';
 import { useAuth } from '@/hooks/useAuth';
 import { useLocation } from '@/hooks/useLocation.web';
+import { supabase } from '@/lib/supabase';
 
 export default function ProfileScreen() {
-  const { profile, signOut, updateProfile } = useAuth();
+  const { user, profile, signOut, updateProfile } = useAuth();
   const { tracking, enableTracking, disableTracking } = useLocation();
 
-  const [fullName, setFullName] = useState(profile?.full_name ?? '');
-  const [phone,    setPhone]    = useState(profile?.phone ?? '');
-  const [saving,   setSaving]   = useState(false);
-  const [editing,  setEditing]  = useState(false);
-  const [error,    setError]    = useState<string | null>(null);
-  const [success,  setSuccess]  = useState<string | null>(null);
+  const [fullName,      setFullName]      = useState(profile?.full_name ?? '');
+  const [phone,         setPhone]         = useState(profile?.phone ?? '');
+  const [saving,        setSaving]        = useState(false);
+  const [editing,       setEditing]       = useState(false);
+  const [error,         setError]         = useState<string | null>(null);
+  const [success,       setSuccess]       = useState<string | null>(null);
+  const [avatarUrl,     setAvatarUrl]     = useState<string | null>(profile?.avatar_url ?? null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const initials = (profile?.full_name ?? profile?.email ?? '?')
     .split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    const ext  = file.name.split('.').pop()?.toLowerCase() ?? 'jpg';
+    const path = `${user.id}/avatar.${ext}`;
+
+    setUploadingAvatar(true);
+    setError(null);
+
+    const { error: uploadError } = await supabase.storage
+      .from('avatars')
+      .upload(path, file, { upsert: true, contentType: file.type });
+
+    if (uploadError) {
+      setError(`Erreur upload : ${uploadError.message}`);
+      setUploadingAvatar(false);
+      return;
+    }
+
+    const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path);
+    // Ajouter un cache-buster pour forcer le rechargement de l'image
+    const urlWithBust = `${publicUrl}?t=${Date.now()}`;
+
+    const { error: updateError } = await updateProfile({ avatar_url: publicUrl });
+    setUploadingAvatar(false);
+
+    if (updateError) {
+      setError(`Erreur mise à jour : ${updateError.message}`);
+    } else {
+      setAvatarUrl(urlWithBust);
+      setSuccess('Photo mise à jour.');
+      setTimeout(() => setSuccess(null), 3000);
+    }
+  }
 
   async function handleSave() {
     setError(null);
@@ -72,11 +112,40 @@ export default function ProfileScreen() {
 
         {/* Avatar */}
         <View style={{ alignItems: 'center', marginVertical: 24 }}>
-          <View style={{ width: 88, height: 88, borderRadius: 44, backgroundColor: '#1e3a8a', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-            <Text style={{ color: 'white', fontSize: 28, fontWeight: '700' }}>{initials}</Text>
-          </View>
+          {/* Input fichier caché — déclenché par le clic sur l'avatar */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            style={{ display: 'none' }}
+            onChange={handleAvatarChange}
+          />
+          <TouchableOpacity
+            onPress={() => fileInputRef.current?.click()}
+            disabled={uploadingAvatar}
+            style={{ marginBottom: 12, position: 'relative' as any }}
+          >
+            <View style={{ width: 88, height: 88, borderRadius: 44, backgroundColor: '#1e3a8a', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+              {avatarUrl
+                ? <img src={avatarUrl} alt="avatar" style={{ width: 88, height: 88, objectFit: 'cover', borderRadius: '50%' }} />
+                : <Text style={{ color: 'white', fontSize: 28, fontWeight: '700' }}>{initials}</Text>
+              }
+            </View>
+            <View style={{
+              position: 'absolute' as any, bottom: 0, right: 0,
+              width: 26, height: 26, borderRadius: 13,
+              backgroundColor: '#1e40af', borderWidth: 2, borderColor: 'white',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              {uploadingAvatar
+                ? <ActivityIndicator size="small" color="white" />
+                : <Text style={{ fontSize: 13 }}>📷</Text>
+              }
+            </View>
+          </TouchableOpacity>
           <Text style={{ fontSize: 20, fontWeight: '700', color: '#1f2937' }}>{profile?.full_name ?? 'Mon profil'}</Text>
           <Text style={{ color: '#9ca3af', fontSize: 13, marginTop: 2 }}>{profile?.email}</Text>
+          <Text style={{ color: '#9ca3af', fontSize: 11, marginTop: 4 }}>Appuyez sur la photo pour la modifier</Text>
         </View>
 
         {/* Bannières feedback */}

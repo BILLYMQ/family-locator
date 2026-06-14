@@ -201,6 +201,11 @@ export function useFamily(currentUserId: string | undefined) {
       child_id:  childId,
       status:    'pending',
     });
+    // Notifier le destinataire par push (fire & forget — ne bloque pas si absent)
+    if (!error) {
+      supabase.functions.invoke('notify-invitation', { body: { recipient_id: childId } })
+        .catch(() => {});
+    }
     return { error };
   }
 

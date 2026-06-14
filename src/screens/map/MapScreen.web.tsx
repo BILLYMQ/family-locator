@@ -20,6 +20,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useFamily } from '@/hooks/useFamily';
 import { useLocation } from '@/hooks/useLocation.web';
+import { reverseGeocode } from '@/lib/geocoding';
 import { FamilyMember, Location } from '@/types/database';
 
 // ── Constantes ────────────────────────────────────────────────────────────────
@@ -77,6 +78,17 @@ function formatTime(iso: string): string {
   if (d < 60_000)    return "À l'instant";
   if (d < 3_600_000) return `Il y a ${Math.floor(d / 60_000)} min`;
   return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function memberStatus(updatedAt: string | undefined): { color: string; label: string } {
+  if (!updatedAt) return { color: 'rgba(255,255,255,.15)', label: '' };
+  const mins = (Date.now() - new Date(updatedAt).getTime()) / 60_000;
+  if (mins < 1)   return { color: '#22c55e', label: 'En direct' };
+  if (mins < 15)  return { color: '#22c55e', label: `${Math.round(mins)}min` };
+  if (mins < 60)  return { color: '#f59e0b', label: `${Math.round(mins)}min` };
+  const hrs = mins / 60;
+  if (hrs  < 24)  return { color: '#ef4444', label: `${Math.round(hrs)}h` };
+  return { color: '#6b7280', label: `${Math.floor(hrs / 24)}j` };
 }
 
 function makeUserIcon(): L.DivIcon {
@@ -161,6 +173,8 @@ export default function MapScreen() {
   const [pushing,         setPushing]         = useState(false);
   const [pushMsg,         setPushMsg]         = useState<{ ok: boolean; text: string } | null>(null);
   const [onlineCount,     setOnlineCount]     = useState(0);
+  const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
+  const [sosState,        setSosState]        = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
   const userCenter: [number, number] | null = currentLocation
     ? [currentLocation.coords.latitude, currentLocation.coords.longitude]
@@ -335,7 +349,33 @@ export default function MapScreen() {
     setOnlineCount(members.filter(m => !!memberLocations[m.id]).length);
   }, [members, memberLocations]);
 
+  // ── Géocodage inversé — se déclenche quand un membre est sélectionné ────────
+  useEffect(() => {
+    setSelectedAddress(null);
+    if (!selectedMember) return;
+    const loc = memberLocations[selectedMember.id];
+    if (!loc) return;
+    let cancelled = false;
+    reverseGeocode(loc.latitude, loc.longitude).then(addr => {
+      if (!cancelled) setSelectedAddress(addr);
+    });
+    return () => { cancelled = true; };
+  }, [selectedMember, memberLocations]);
+
   // ── Actions ───────────────────────────────────────────────────────────────
+  async function handleSOS() {
+    if (sosState === 'sending') return;
+    const ok = window.confirm(
+      `Envoyer une alerte SOS à toute votre famille ?\n\nVotre position actuelle sera transmise immédiatement.`
+    );
+    if (!ok) return;
+    setSosState('sending');
+    await pushLocation();
+    const { error } = await supabase.functions.invoke('send-sos');
+    setSosState(error ? 'error' : 'sent');
+    setTimeout(() => setSosState('idle'), 8000);
+  }
+
   function flyToMe() {
     if (userCenter && mapRef.current) {
       mapRef.current.flyTo(userCenter, 15, { animate: true, duration: 1.2 });
@@ -502,6 +542,35 @@ export default function MapScreen() {
           </Text>
         </TouchableOpacity>
 
+        {/* Bouton SOS */}
+        <TouchableOpacity
+          onPress={handleSOS}
+          disabled={sosState === 'sending'}
+          style={{
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+            backgroundColor: sosState === 'sent'    ? 'rgba(34,197,94,.15)'
+                           : sosState === 'error'   ? 'rgba(239,68,68,.15)'
+                           : sosState === 'sending' ? 'rgba(239,68,68,.1)'
+                           :                          'rgba(239,68,68,.12)',
+            borderRadius: 12, paddingVertical: 10, marginBottom: 6,
+            borderWidth: 1,
+            borderColor: sosState === 'sent'  ? 'rgba(34,197,94,.4)'
+                       : sosState === 'error' ? 'rgba(239,68,68,.6)'
+                       :                        'rgba(239,68,68,.35)',
+          }}
+        >
+          <Text style={{ fontSize: 16, marginRight: 6 }}>
+            {sosState === 'sending' ? '⏳' : sosState === 'sent' ? '✅' : sosState === 'error' ? '⚠️' : '🆘'}
+          </Text>
+          <Text style={{ fontWeight: '600', fontSize: 13,
+            color: sosState === 'sent' ? '#86efac' : sosState === 'error' ? '#fca5a5' : '#fca5a5' }}>
+            {sosState === 'sending' ? 'Envoi en cours…'
+           : sosState === 'sent'    ? 'SOS envoyé à votre famille'
+           : sosState === 'error'   ? 'Erreur — réessayez'
+           :                          'Alerte SOS'}
+          </Text>
+        </TouchableOpacity>
+
         {/* Feedback */}
         {pushMsg && (
           <View style={{
@@ -520,29 +589,34 @@ export default function MapScreen() {
           <View style={{
             backgroundColor: 'rgba(99,102,241,.12)', borderRadius: 12,
             paddingHorizontal: 12, paddingVertical: 8, marginBottom: 10,
-            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
             borderWidth: 1, borderColor: 'rgba(99,102,241,.3)',
           }}>
-            <View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <Text style={{ fontWeight: '600', color: '#a5b4fc', fontSize: 13 }}>
                 {selectedMember.full_name ?? selectedMember.email}
               </Text>
-              {memberLocations[selectedMember.id] && (
-                <Text style={{ fontSize: 11, color: 'rgba(165,180,252,.6)', marginTop: 1 }}>
-                  🕐 {formatTime(memberLocations[selectedMember.id].updated_at)}
-                </Text>
-              )}
+              <TouchableOpacity onPress={() => setSelectedMember(null)} style={{ padding: 4 }}>
+                <Text style={{ color: 'rgba(255,255,255,.35)', fontSize: 16 }}>✕</Text>
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={() => setSelectedMember(null)} style={{ padding: 4 }}>
-              <Text style={{ color: 'rgba(255,255,255,.35)', fontSize: 16 }}>✕</Text>
-            </TouchableOpacity>
+            {memberLocations[selectedMember.id] && (
+              <Text style={{ fontSize: 11, color: 'rgba(165,180,252,.6)', marginTop: 2 }}>
+                🕐 {formatTime(memberLocations[selectedMember.id].updated_at)}
+              </Text>
+            )}
+            {selectedAddress && (
+              <Text style={{ fontSize: 11, color: 'rgba(165,180,252,.5)', marginTop: 2 }} numberOfLines={1}>
+                📍 {selectedAddress}
+              </Text>
+            )}
           </View>
         )}
 
         {/* Avatars membres */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 2 }}>
           {members.map((member, idx) => {
-            const hasLoc  = !!memberLocations[member.id];
+            const loc     = memberLocations[member.id];
+            const status  = memberStatus(loc?.updated_at);
             const color   = COLORS[idx % COLORS.length];
             const initial = (member.full_name ?? member.email ?? '?')[0].toUpperCase();
             const isSel   = selectedMember?.id === member.id;
@@ -560,7 +634,12 @@ export default function MapScreen() {
                 <Text style={{ fontSize: 10, color: isSel ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.4)', marginTop: 4, fontWeight: isSel ? '700' : '400' }} numberOfLines={1}>
                   {(member.full_name ?? member.email ?? '').split(' ')[0]}
                 </Text>
-                <View style={{ width: 5, height: 5, borderRadius: 3, marginTop: 2, backgroundColor: hasLoc ? '#22c55e' : 'rgba(255,255,255,.15)' }} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 3 }}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: status.color }} />
+                  {status.label ? (
+                    <Text style={{ fontSize: 9, color: status.color, fontWeight: '600' }}>{status.label}</Text>
+                  ) : null}
+                </View>
               </TouchableOpacity>
             );
           })}
