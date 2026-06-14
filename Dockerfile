@@ -20,11 +20,16 @@ RUN npx expo export --platform web
 
 # ── Stage 2 : Serveur nginx léger ──────────────────────────────────────────
 FROM nginx:1.25-alpine
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 80
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD wget -qO- http://localhost/index.html || exit 1
+# Port par défaut — Railway injecte $PORT et remplace cette valeur
+ENV PORT=8080
+
+# nginx:alpine traite automatiquement /etc/nginx/templates/*.template
+# via envsubst au démarrage → résultat dans /etc/nginx/conf.d/
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 8080
 
 CMD ["nginx", "-g", "daemon off;"]
