@@ -436,8 +436,16 @@ export default function MapScreen() {
     setPushing(false);
     setPushMsg(r.success
       ? { ok: true,  text: '✓ Position envoyée !' }
-      : { ok: false, text: r.error ?? 'Erreur' });
-    setTimeout(() => setPushMsg(null), 4000);
+      : { ok: false, text: r.error ?? 'Erreur inconnue' });
+    // Recentrer sur la nouvelle position obtenue
+    if (r.success && r.location && mapRef.current) {
+      mapRef.current.flyTo(
+        [r.location.coords.latitude, r.location.coords.longitude],
+        Math.max(mapRef.current.getZoom(), 15),
+        { animate: true, duration: 0.8 }
+      );
+    }
+    setTimeout(() => setPushMsg(null), 5000);
   }
 
   // ── Rendu ─────────────────────────────────────────────────────────────────
@@ -549,7 +557,7 @@ export default function MapScreen() {
                 Partager ma position
               </div>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,.38)', fontFamily: 'sans-serif', marginTop: 1 }}>
-                {tracking ? 'Mise à jour toutes les 5 min' : 'Famille ne peut pas vous voir'}
+                {tracking ? 'Actif · mise à jour en temps réel (onglet ouvert)' : 'Famille ne peut pas vous voir'}
               </div>
             </div>
           </div>
