@@ -19,7 +19,7 @@ import L from 'leaflet';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useFamily } from '@/hooks/useFamily';
-import { useLocation } from '@/hooks/useLocation.web';
+import { useLocation, DEBUG_GPS } from '@/hooks/useLocation.web';
 import { reverseGeocode } from '@/lib/geocoding';
 import { FamilyMember, Location, LocationHistory } from '@/types/database';
 
@@ -157,6 +157,7 @@ export default function MapScreen() {
   const {
     currentLocation, tracking, permissionDenied,
     enableTracking, disableTracking, pushLocation,
+    debugInfo,
   } = useLocation();
 
   // ── Refs Leaflet ──────────────────────────────────────────────────────────
@@ -177,6 +178,7 @@ export default function MapScreen() {
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
   const [sosState,        setSosState]        = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [showingHistory,  setShowingHistory]  = useState(false);
+  const [debugOpen,       setDebugOpen]       = useState(true);
 
   const userCenter: [number, number] | null = currentLocation
     ? [currentLocation.coords.latitude, currentLocation.coords.longitude]
@@ -303,8 +305,10 @@ export default function MapScreen() {
         zIndexOffset: 1000,
       }).addTo(mapRef.current);
       mapRef.current.flyTo(userCenter, 15, { animate: true, duration: 1.2 });
+      if (DEBUG_GPS) console.log('[MAP] flyTo position initiale', userCenter, 'zoom 15');
     } else {
       userMarkerRef.current.setLatLng(userCenter);
+      if (DEBUG_GPS) console.log('[MAP] marker déplacé →', userCenter);
     }
   }, [userCenter, mapReady]);
 
@@ -430,6 +434,7 @@ export default function MapScreen() {
 
   async function handlePushLocation() {
     if (pushing) return;
+    if (DEBUG_GPS) console.log('[GPS] pushLocation → bouton cliqué');
     setPushing(true);
     setPushMsg(null);
     const r = await pushLocation();
@@ -437,13 +442,10 @@ export default function MapScreen() {
     setPushMsg(r.success
       ? { ok: true,  text: '✓ Position envoyée !' }
       : { ok: false, text: r.error ?? 'Erreur inconnue' });
-    // Recentrer sur la nouvelle position obtenue
     if (r.success && r.location && mapRef.current) {
-      mapRef.current.flyTo(
-        [r.location.coords.latitude, r.location.coords.longitude],
-        Math.max(mapRef.current.getZoom(), 15),
-        { animate: true, duration: 0.8 }
-      );
+      const center: [number, number] = [r.location.coords.latitude, r.location.coords.longitude];
+      if (DEBUG_GPS) console.log('[MAP] flyTo après push manuel', center);
+      mapRef.current.flyTo(center, Math.max(mapRef.current.getZoom(), 15), { animate: true, duration: 0.8 });
     }
     setTimeout(() => setPushMsg(null), 5000);
   }
@@ -488,6 +490,109 @@ export default function MapScreen() {
               padding: '7px 14px', cursor: 'pointer', flexShrink: 0,
             }}
           >🔄 Réessayer</button>
+        </div>
+      )}
+
+      {/* ════ PANNEAU DIAGNOSTIC GPS (DEBUG_GPS=true uniquement) ════ */}
+      {DEBUG_GPS && (
+        <div style={{
+          position: 'absolute', top: 14, left: 14, zIndex: 1025,
+          width: 272, fontFamily: 'monospace', fontSize: 11,
+        }}>
+          {/* Bouton toggle */}
+          <button
+            onClick={() => setDebugOpen(o => !o)}
+            style={{
+              width: '100%', textAlign: 'left', cursor: 'pointer',
+              background: 'rgba(20,20,36,0.97)', fontFamily: 'monospace', fontSize: 11,
+              border: '1px solid rgba(99,102,241,.55)', fontWeight: 700,
+              color: '#a5b4fc', padding: '5px 10px',
+              borderRadius: debugOpen ? '10px 10px 0 0' : 10,
+            }}
+          >🔧 DIAG GPS {debugOpen ? '▲' : '▼'}</button>
+
+          {debugOpen && (
+            <div style={{
+              background: 'rgba(8,8,18,0.97)', color: 'rgba(255,255,255,.82)',
+              border: '1px solid rgba(99,102,241,.4)', borderTop: 'none',
+              borderRadius: '0 0 10px 10px', padding: '8px 10px',
+              maxHeight: 440, overflowY: 'auto', lineHeight: 1.55,
+            }}>
+
+              {/* ── Position locale ── */}
+              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>📍 Position locale (navigator)</div>
+              {debugInfo.lastLocalPos ? (<>
+                <div>Lat : <span style={{ color: '#86efac' }}>{debugInfo.lastLocalPos.lat.toFixed(6)}</span></div>
+                <div>Lng : <span style={{ color: '#86efac' }}>{debugInfo.lastLocalPos.lng.toFixed(6)}</span></div>
+                <div>Accuracy : {debugInfo.lastLocalPos.accuracy != null ? `${Math.round(debugInfo.lastLocalPos.accuracy)} m` : '—'}</div>
+                <div>Timestamp : {debugInfo.lastLocalPos.tsStr}</div>
+                {debugInfo.samePos && (
+                  <div style={{ color: '#fbbf24', fontWeight: 700, marginTop: 2 }}>
+                    ⚠️ Même timestamp = cache navigateur
+                  </div>
+                )}
+              </>) : <div style={{ color: '#6b7280' }}>En attente du GPS…</div>}
+
+              {/* ── Dernier push Supabase ── */}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', margin: '7px 0 4px' }} />
+              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>☁️ Dernier push Supabase</div>
+              {debugInfo.lastPushed ? (<>
+                <div>Lat : {debugInfo.lastPushed.lat.toFixed(6)}</div>
+                <div>Lng : {debugInfo.lastPushed.lng.toFixed(6)}</div>
+                <div>updated_at : <span style={{ color: '#86efac' }}>{new Date(debugInfo.lastPushed.updatedAt).toLocaleTimeString('fr-FR')}</span></div>
+                <div>Résultat : {debugInfo.lastPushed.ok
+                  ? <span style={{ color: '#86efac' }}>✓ OK</span>
+                  : <span style={{ color: '#f87171' }}>✗ {debugInfo.lastPushed.error}</span>}
+                </div>
+              </>) : <div style={{ color: '#6b7280' }}>Aucun push encore</div>}
+
+              {/* ── État suivi ── */}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', margin: '7px 0 4px' }} />
+              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>📡 Suivi</div>
+              <div>Tracking : {tracking
+                ? <span style={{ color: '#86efac' }}>✓ Actif</span>
+                : <span style={{ color: '#6b7280' }}>Inactif</span>}
+              </div>
+              <div>watchPosition : {debugInfo.watchActive
+                ? <span style={{ color: '#86efac' }}>✓ Actif</span>
+                : <span style={{ color: '#f87171' }}>✗ Inactif</span>}
+              </div>
+              <div>watchId : {debugInfo.watchId ?? '—'}</div>
+              <div>Erreur GPS : {debugInfo.lastGeoError
+                ? <span style={{ color: '#f87171' }}>{debugInfo.lastGeoError}</span>
+                : <span style={{ color: '#86efac' }}>—</span>}
+              </div>
+              <div>Erreur Supabase : {debugInfo.lastSupabaseError
+                ? <span style={{ color: '#f87171' }}>{debugInfo.lastSupabaseError}</span>
+                : <span style={{ color: '#86efac' }}>—</span>}
+              </div>
+
+              {/* ── Permission ── */}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', margin: '7px 0 4px' }} />
+              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>🔒 Permission</div>
+              <div>État : <span style={{ fontWeight: 700,
+                color: debugInfo.permState === 'granted' ? '#86efac'
+                     : debugInfo.permState === 'denied'  ? '#f87171'
+                     :                                      '#fbbf24',
+              }}>{debugInfo.permState}</span></div>
+
+              {/* ── Avertissement cache ── */}
+              {debugInfo.samePos && (
+                <div style={{
+                  marginTop: 8, padding: '6px 8px', lineHeight: 1.4,
+                  background: 'rgba(251,191,36,.1)', border: '1px solid rgba(251,191,36,.35)',
+                  borderRadius: 6, color: '#fbbf24', fontSize: 10,
+                }}>
+                  Le navigateur renvoie encore la même position.{'\n'}
+                  Testez sur un téléphone ou vérifiez la localisation système.
+                </div>
+              )}
+
+              <div style={{ marginTop: 7, color: '#374151', fontSize: 9 }}>
+                DEBUG_GPS=true · throttle {tracking ? '5 s' : '—'} · intervalle 30 s
+              </div>
+            </div>
+          )}
         </div>
       )}
 
