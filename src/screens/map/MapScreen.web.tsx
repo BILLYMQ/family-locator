@@ -75,9 +75,22 @@ function waitForLeafletCSS(): Promise<void> {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatTime(iso: string): string {
   const d = Date.now() - new Date(iso).getTime();
-  if (d < 60_000)    return "À l'instant";
-  if (d < 3_600_000) return `Il y a ${Math.floor(d / 60_000)} min`;
-  return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  if (d < 60_000)     return "À l'instant";
+  if (d < 3_600_000)  return `Il y a ${Math.floor(d / 60_000)} min`;
+  if (d < 86_400_000) return `Il y a ${Math.floor(d / 3_600_000)} h`;
+  const days = Math.floor(d / 86_400_000);
+  return `Il y a ${days} jour${days > 1 ? 's' : ''}`;
+}
+
+function staleLabel(iso: string): string | null {
+  const d = Date.now() - new Date(iso).getTime();
+  if (d < 3_600_000) return null;
+  if (d < 86_400_000) {
+    const h = Math.floor(d / 3_600_000);
+    return `Position non mise à jour depuis ${h} h — vérifiez que le partage est activé sur son téléphone.`;
+  }
+  const days = Math.floor(d / 86_400_000);
+  return `Position non mise à jour depuis ${days} jour${days > 1 ? 's' : ''} — vérifiez que le partage est activé sur son téléphone.`;
 }
 
 function memberStatus(updatedAt: string | undefined): { color: string; label: string } {
@@ -386,7 +399,12 @@ export default function MapScreen() {
   }, [user, members]);
 
   useEffect(() => {
-    setOnlineCount(members.filter(m => !!memberLocations[m.id]).length);
+    // "en ligne" = position reçue il y a moins de 15 minutes
+    setOnlineCount(members.filter(m => {
+      const loc = memberLocations[m.id];
+      if (!loc) return false;
+      return Date.now() - new Date(loc.updated_at).getTime() < 15 * 60_000;
+    }).length);
   }, [members, memberLocations]);
 
   // ── Géocodage inversé — se déclenche quand un membre est sélectionné ────────
@@ -497,9 +515,8 @@ export default function MapScreen() {
       {DEBUG_GPS && (
         <div style={{
           position: 'absolute', top: 14, left: 14, zIndex: 1025,
-          width: 272, fontFamily: 'monospace', fontSize: 11,
+          width: 292, fontFamily: 'monospace', fontSize: 11,
         }}>
-          {/* Bouton toggle */}
           <button
             onClick={() => setDebugOpen(o => !o)}
             style={{
@@ -516,58 +533,103 @@ export default function MapScreen() {
               background: 'rgba(8,8,18,0.97)', color: 'rgba(255,255,255,.82)',
               border: '1px solid rgba(99,102,241,.4)', borderTop: 'none',
               borderRadius: '0 0 10px 10px', padding: '8px 10px',
-              maxHeight: 440, overflowY: 'auto', lineHeight: 1.55,
+              maxHeight: 540, overflowY: 'auto', lineHeight: 1.55,
             }}>
 
-              {/* ── Position locale ── */}
-              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>📍 Position locale (navigator)</div>
-              {debugInfo.lastLocalPos ? (<>
-                <div>Lat : <span style={{ color: '#86efac' }}>{debugInfo.lastLocalPos.lat.toFixed(6)}</span></div>
-                <div>Lng : <span style={{ color: '#86efac' }}>{debugInfo.lastLocalPos.lng.toFixed(6)}</span></div>
-                <div>Accuracy : {debugInfo.lastLocalPos.accuracy != null ? `${Math.round(debugInfo.lastLocalPos.accuracy)} m` : '—'}</div>
-                <div>Timestamp : {debugInfo.lastLocalPos.tsStr}</div>
-                {debugInfo.samePos && (
-                  <div style={{ color: '#fbbf24', fontWeight: 700, marginTop: 2 }}>
-                    ⚠️ Même timestamp = cache navigateur
+              {/* ── 1. GPS LOCAL ── */}
+              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>📍 GPS local (watchPosition)</div>
+              {debugInfo.lastLocalPos ? (() => {
+                const acc = debugInfo.lastLocalPos!.accuracy;
+                const accColor = acc == null ? '#6b7280' : acc < 50 ? '#86efac' : acc < 200 ? '#fbbf24' : '#f87171';
+                return (<>
+                  <div>Lat : <span style={{ color: '#86efac' }}>{debugInfo.lastLocalPos!.lat.toFixed(6)}</span></div>
+                  <div>Lng : <span style={{ color: '#86efac' }}>{debugInfo.lastLocalPos!.lng.toFixed(6)}</span></div>
+                  <div>Précision :&nbsp;
+                    <span style={{ color: accColor, fontWeight: 700 }}>
+                      {acc != null ? `${Math.round(acc)} m` : '—'}
+                    </span>
+                    {acc != null && acc < 50   && <span style={{ color: '#86efac' }}> ✓ GPS</span>}
+                    {acc != null && acc >= 50  && acc < 200 && <span style={{ color: '#fbbf24' }}> WiFi</span>}
+                    {acc != null && acc >= 200 && <span style={{ color: '#f87171' }}> ⚠️ IP/réseau</span>}
                   </div>
-                )}
-              </>) : <div style={{ color: '#6b7280' }}>En attente du GPS…</div>}
+                  <div>Fix à : {debugInfo.lastLocalPos!.tsStr}</div>
+                  {acc != null && acc >= 200 && (
+                    <div style={{ marginTop: 4, padding: '5px 7px', lineHeight: 1.4, background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.35)', borderRadius: 6, color: '#f87171', fontSize: 10 }}>
+                      Précision {Math.round(acc)} m = localisation réseau/IP.
+                      Sur ordinateur, la position ne suit pas les déplacements.
+                    </div>
+                  )}
+                </>);
+              })() : <div style={{ color: '#6b7280' }}>En attente du GPS…</div>}
 
-              {/* ── Dernier push Supabase ── */}
+              {/* ── 2. DÉPLACEMENT ── */}
               <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', margin: '7px 0 4px' }} />
-              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>☁️ Dernier push Supabase</div>
-              {debugInfo.lastPushed ? (<>
-                <div>Lat : {debugInfo.lastPushed.lat.toFixed(6)}</div>
-                <div>Lng : {debugInfo.lastPushed.lng.toFixed(6)}</div>
-                <div>updated_at : <span style={{ color: '#86efac' }}>{new Date(debugInfo.lastPushed.updatedAt).toLocaleTimeString('fr-FR')}</span></div>
-                <div>Résultat : {debugInfo.lastPushed.ok
-                  ? <span style={{ color: '#86efac' }}>✓ OK</span>
-                  : <span style={{ color: '#f87171' }}>✗ {debugInfo.lastPushed.error}</span>}
+              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>📏 Déplacement</div>
+              {debugInfo.distanceMoved === null
+                ? <div style={{ color: '#6b7280' }}>— (premier fix)</div>
+                : <div>Depuis fix précédent :&nbsp;
+                    <span style={{ fontWeight: 700, color: debugInfo.posFixed ? '#f87171' : debugInfo.distanceMoved < 20 ? '#fbbf24' : '#86efac' }}>
+                      {debugInfo.distanceMoved < 0.1 ? '0 m' : `${debugInfo.distanceMoved.toFixed(1)} m`}
+                    </span>
+                  </div>
+              }
+              {debugInfo.posFixed && (
+                <div style={{ marginTop: 4, padding: '5px 7px', lineHeight: 1.4, background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.35)', borderRadius: 6, color: '#f87171', fontSize: 10 }}>
+                  Le navigateur renvoie la même position.
+                  Sur ordinateur, la localisation peut être approximative.
+                  Testez sur téléphone pour un vrai suivi GPS.
                 </div>
+              )}
+              {!debugInfo.posFixed && debugInfo.distanceMoved !== null && debugInfo.distanceMoved < 20 && (
+                <div style={{ marginTop: 4, padding: '5px 7px', background: 'rgba(251,191,36,.1)', border: '1px solid rgba(251,191,36,.35)', borderRadius: 6, color: '#fbbf24', fontSize: 10 }}>
+                  Déplacement trop faible ou position navigateur inchangée.
+                </div>
+              )}
+              {debugInfo.samePos && (
+                <div style={{ marginTop: 4, padding: '5px 7px', background: 'rgba(251,191,36,.1)', border: '1px solid rgba(251,191,36,.35)', borderRadius: 6, color: '#fbbf24', fontSize: 10 }}>
+                  ⚠️ Même timestamp = cache navigateur
+                </div>
+              )}
+
+              {/* ── 3. PARTAGE SUPABASE ── */}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', margin: '7px 0 4px' }} />
+              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>☁️ Partage Supabase</div>
+              <div>Switch Carte :&nbsp;
+                {tracking
+                  ? <span style={{ color: '#86efac', fontWeight: 700 }}>✓ ACTIF</span>
+                  : <span style={{ color: '#6b7280' }}>✗ INACTIF</span>}
+              </div>
+              {!tracking && (
+                <div style={{ color: '#9ca3af', fontSize: 10, marginTop: 1 }}>
+                  → Activez "Partager ma position" (panneau bas)
+                </div>
+              )}
+              {debugInfo.lastPushed ? (<>
+                <div style={{ marginTop: 3 }}>
+                  Dernier push :&nbsp;
+                  <span style={{ color: '#86efac' }}>{new Date(debugInfo.lastPushed.updatedAt).toLocaleTimeString('fr-FR')}</span>
+                  &nbsp;{debugInfo.lastPushed.ok
+                    ? <span style={{ color: '#86efac' }}>✓ OK</span>
+                    : <span style={{ color: '#f87171' }}>✗ ERR</span>}
+                </div>
+                {!debugInfo.lastPushed.ok && debugInfo.lastPushed.error && (
+                  <div style={{ color: '#f87171', fontSize: 10 }}>{debugInfo.lastPushed.error}</div>
+                )}
               </>) : <div style={{ color: '#6b7280' }}>Aucun push encore</div>}
 
-              {/* ── État suivi ── */}
+              {/* ── 4. watchPosition ── */}
               <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', margin: '7px 0 4px' }} />
-              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>📡 Suivi</div>
-              <div>Tracking : {tracking
-                ? <span style={{ color: '#86efac' }}>✓ Actif</span>
-                : <span style={{ color: '#6b7280' }}>Inactif</span>}
+              <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>📡 watchPosition</div>
+              <div>État :&nbsp;
+                {debugInfo.watchActive
+                  ? <span style={{ color: '#86efac' }}>✓ Écoute active (id {debugInfo.watchId})</span>
+                  : <span style={{ color: '#f87171' }}>✗ Inactif</span>}
               </div>
-              <div>watchPosition : {debugInfo.watchActive
-                ? <span style={{ color: '#86efac' }}>✓ Actif</span>
-                : <span style={{ color: '#f87171' }}>✗ Inactif</span>}
-              </div>
-              <div>watchId : {debugInfo.watchId ?? '—'}</div>
-              <div>Erreur GPS : {debugInfo.lastGeoError
-                ? <span style={{ color: '#f87171' }}>{debugInfo.lastGeoError}</span>
-                : <span style={{ color: '#86efac' }}>—</span>}
-              </div>
-              <div>Erreur Supabase : {debugInfo.lastSupabaseError
-                ? <span style={{ color: '#f87171' }}>{debugInfo.lastSupabaseError}</span>
-                : <span style={{ color: '#86efac' }}>—</span>}
-              </div>
+              {debugInfo.lastGeoError && (
+                <div style={{ color: '#f87171', fontSize: 10, marginTop: 2 }}>Erreur GPS : {debugInfo.lastGeoError}</div>
+              )}
 
-              {/* ── Permission ── */}
+              {/* ── 5. Permission ── */}
               <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', margin: '7px 0 4px' }} />
               <div style={{ color: '#818cf8', fontWeight: 700, marginBottom: 3 }}>🔒 Permission</div>
               <div>État : <span style={{ fontWeight: 700,
@@ -576,20 +638,8 @@ export default function MapScreen() {
                      :                                      '#fbbf24',
               }}>{debugInfo.permState}</span></div>
 
-              {/* ── Avertissement cache ── */}
-              {debugInfo.samePos && (
-                <div style={{
-                  marginTop: 8, padding: '6px 8px', lineHeight: 1.4,
-                  background: 'rgba(251,191,36,.1)', border: '1px solid rgba(251,191,36,.35)',
-                  borderRadius: 6, color: '#fbbf24', fontSize: 10,
-                }}>
-                  Le navigateur renvoie encore la même position.{'\n'}
-                  Testez sur un téléphone ou vérifiez la localisation système.
-                </div>
-              )}
-
               <div style={{ marginTop: 7, color: '#374151', fontSize: 9 }}>
-                DEBUG_GPS=true · throttle {tracking ? '5 s' : '—'} · intervalle 30 s
+                DEBUG_GPS=true · throttle 5 s · intervalle 30 s
               </div>
             </div>
           )}
@@ -753,11 +803,20 @@ export default function MapScreen() {
                 {selectedMember.status_text}
               </Text>
             ) : null}
-            {memberLocations[selectedMember.id] && (
-              <Text style={{ fontSize: 11, color: 'rgba(165,180,252,.6)', marginTop: 2 }}>
-                🕐 {formatTime(memberLocations[selectedMember.id].updated_at)}
-              </Text>
-            )}
+            {memberLocations[selectedMember.id] && (() => {
+              const loc   = memberLocations[selectedMember.id];
+              const warn  = staleLabel(loc.updated_at);
+              return (<>
+                <Text style={{ fontSize: 11, color: 'rgba(165,180,252,.6)', marginTop: 2 }}>
+                  🕐 {formatTime(loc.updated_at)}
+                </Text>
+                {warn && (
+                  <Text style={{ fontSize: 11, color: '#f59e0b', marginTop: 3 }}>
+                    ⚠️ {warn}
+                  </Text>
+                )}
+              </>);
+            })()}
             {selectedAddress && (
               <Text style={{ fontSize: 11, color: 'rgba(165,180,252,.5)', marginTop: 2 }} numberOfLines={1}>
                 📍 {selectedAddress}

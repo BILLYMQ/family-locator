@@ -4,16 +4,17 @@ import { supabase } from '@/lib/supabase';
 
 export const LOCATION_TASK_NAME = 'FAMILY_LOCATOR_BACKGROUND_TASK';
 
-// Intervalle de mise à jour en millisecondes (5 minutes)
 const UPDATE_INTERVAL_MS = 5 * 60 * 1000;
 
-// Définition de la tâche d'arrière-plan
+// ── Tâche background ─────────────────────────────────────────────────────────
+// Appelée par expo-location quand l'OS fournit une nouvelle position.
+// getSession() est préféré à getUser() en contexte background : il lit depuis
+// AsyncStorage sans requête réseau supplémentaire pour vérifier le token.
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) {
-    console.error('[LocationTask] Erreur:', error.message);
+    console.error('[LOCATION] background task error:', error.message);
     return;
   }
-
   if (!data) return;
 
   const { locations } = data as { locations: Location.LocationObject[] };
@@ -21,77 +22,106 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (!latest) return;
 
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) {
+      console.warn('[LOCATION] background push skipped: no session');
+      return;
+    }
 
-    await supabase.from('locations').upsert(
+    const { error: upsertError } = await supabase.from('locations').upsert(
       {
-        user_id: user.id,
-        latitude: latest.coords.latitude,
-        longitude: latest.coords.longitude,
-        accuracy: latest.coords.accuracy ?? null,
-        updated_at: new Date(latest.timestamp).toISOString(),
+        user_id:    session.user.id,
+        latitude:   latest.coords.latitude,
+        longitude:  latest.coords.longitude,
+        accuracy:   latest.coords.accuracy ?? null,
+        updated_at: new Date().toISOString(), // heure serveur, pas horodatage GPS
       },
       { onConflict: 'user_id' }
     );
+
+    if (upsertError) {
+      console.error('[LOCATION] background push error:', upsertError.message);
+    } else {
+      console.log('[LOCATION] background push success', {
+        lat: latest.coords.latitude.toFixed(6),
+        lng: latest.coords.longitude.toFixed(6),
+        acc: latest.coords.accuracy,
+      });
+    }
   } catch (err) {
-    console.error('[LocationTask] Échec upsert:', err);
+    console.error('[LOCATION] background push error (exception):', err);
   }
 });
 
+// ── Démarrage de la tâche background ────────────────────────────────────────
 export async function startLocationTracking(): Promise<boolean> {
-  // Vérifier les permissions
-  const { status: foreground } = await Location.requestForegroundPermissionsAsync();
-  if (foreground !== 'granted') return false;
+  const { status: fg } = await Location.requestForegroundPermissionsAsync();
+  if (fg !== 'granted') return false;
 
-  const { status: background } = await Location.requestBackgroundPermissionsAsync();
-  if (background !== 'granted') return false;
+  const { status: bg } = await Location.requestBackgroundPermissionsAsync();
+  if (bg !== 'granted') return false;
 
-  const isAlreadyRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME)
-    .catch(() => false);
-
-  if (isAlreadyRunning) return true;
+  const running = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+  if (running) return true;
 
   await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-    accuracy: Location.Accuracy.Balanced,
-    timeInterval: UPDATE_INTERVAL_MS,
-    distanceInterval: 50,          // Met à jour si déplacement > 50 m
-    pausesUpdatesAutomatically: false,
-    showsBackgroundLocationIndicator: true, // iOS : icône dans la barre de statut
-    foregroundService: {             // Android : notification persistante requise
+    accuracy:                       Location.Accuracy.Balanced,
+    timeInterval:                   UPDATE_INTERVAL_MS,
+    distanceInterval:               50,
+    pausesUpdatesAutomatically:     false,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
       notificationTitle: 'FamilyLocator actif',
-      notificationBody: 'Partage de position en cours…',
+      notificationBody:  'Partage de position en cours…',
       notificationColor: '#1e40af',
     },
   });
 
+  console.log('[LOCATION] background task started');
   return true;
 }
 
+// ── Arrêt de la tâche background ─────────────────────────────────────────────
 export async function stopLocationTracking(): Promise<void> {
-  const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME)
-    .catch(() => false);
-  if (isRunning) {
+  const running = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+  if (running) {
     await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+    console.log('[LOCATION] background task stopped');
   }
 }
 
+// ── Push ponctuel (foreground) ───────────────────────────────────────────────
+// Lance un getCurrentPositionAsync et upsert dans Supabase.
+// Utilisé à l'activation du suivi et par l'intervalle foreground.
 export async function pushCurrentLocation(): Promise<void> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return;
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user) {
+    console.warn('[LOCATION] foreground push skipped: no session');
+    return;
+  }
 
-  const location = await Location.getCurrentPositionAsync({
+  const loc = await Location.getCurrentPositionAsync({
     accuracy: Location.Accuracy.High,
   });
 
-  await supabase.from('locations').upsert(
+  const { error } = await supabase.from('locations').upsert(
     {
-      user_id: user.id,
-      latitude: location.coords.latitude,
-      longitude: location.coords.longitude,
-      accuracy: location.coords.accuracy ?? null,
+      user_id:    session.user.id,
+      latitude:   loc.coords.latitude,
+      longitude:  loc.coords.longitude,
+      accuracy:   loc.coords.accuracy ?? null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id' }
   );
+
+  if (error) {
+    console.error('[LOCATION] foreground push error:', error.message);
+    throw error;
+  }
+  console.log('[LOCATION] foreground push success', {
+    lat: loc.coords.latitude.toFixed(6),
+    lng: loc.coords.longitude.toFixed(6),
+    acc: loc.coords.accuracy,
+  });
 }

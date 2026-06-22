@@ -125,12 +125,17 @@ export default function MapScreen() {
     }, 600);
   }
 
-  function formatTime(isoString: string) {
-    const d = new Date(isoString);
-    const diff = Date.now() - d.getTime();
-    if (diff < 60_000) return 'À l\'instant';
-    if (diff < 3_600_000) return `Il y a ${Math.floor(diff / 60_000)} min`;
-    return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  function formatTime(isoString: string): string {
+    const diff = Date.now() - new Date(isoString).getTime();
+    if (diff < 60_000)     return "À l'instant";
+    if (diff < 3_600_000)  return `Il y a ${Math.floor(diff / 60_000)} min`;
+    if (diff < 86_400_000) return `Il y a ${Math.floor(diff / 3_600_000)} h`;
+    const days = Math.floor(diff / 86_400_000);
+    return `Il y a ${days} jour${days > 1 ? 's' : ''}`;
+  }
+
+  function isStale(isoString: string): boolean {
+    return Date.now() - new Date(isoString).getTime() > 60 * 60_000; // > 1 h
   }
 
   if (permissionDenied) {
@@ -254,11 +259,16 @@ export default function MapScreen() {
                 <Text className="text-gray-400 text-lg">✕</Text>
               </TouchableOpacity>
             </View>
-            {memberLocations[selectedMember.id] && (
+            {memberLocations[selectedMember.id] && (<>
               <Text className="text-xs text-primary-600 mt-1">
                 Dernière position : {formatTime(memberLocations[selectedMember.id].updated_at)}
               </Text>
-            )}
+              {isStale(memberLocations[selectedMember.id].updated_at) && (
+                <Text className="text-xs mt-1" style={{ color: '#f59e0b' }}>
+                  ⚠️ Position non récente — vérifiez que le partage est activé sur son téléphone.
+                </Text>
+              )}
+            </>)}
           </View>
         )}
 
