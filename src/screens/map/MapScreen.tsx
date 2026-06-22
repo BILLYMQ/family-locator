@@ -59,27 +59,25 @@ export default function MapScreen() {
         setMemberLocations(map);
       });
 
-    // Abonnement Realtime — nom unique pour éviter les collisions (StrictMode/reconnexion)
+    // Pas de filtre server-side : RLS garantit qu'on ne reçoit que les membres
+    // acceptés. REPLICA IDENTITY FULL est requis pour les UPDATE avec RLS.
     const channel = supabase
       .channel(`map_locs_${Date.now()}`)
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'locations',
-          filter: `user_id=in.(${memberIds.join(',')})`,
-        },
+        { event: '*', schema: 'public', table: 'locations' },
         payload => {
+          console.log('[REALTIME] location update received', payload.eventType);
           if (payload.eventType === 'DELETE') {
-            setMemberLocations(prev => {
-              const next = { ...prev };
-              delete next[(payload.old as Location).user_id];
-              return next;
-            });
+            const uid = (payload.old as Location).user_id;
+            if (memberIds.includes(uid)) {
+              setMemberLocations(prev => { const next = { ...prev }; delete next[uid]; return next; });
+            }
           } else {
             const loc = payload.new as Location;
-            setMemberLocations(prev => ({ ...prev, [loc.user_id]: loc }));
+            if (memberIds.includes(loc.user_id)) {
+              setMemberLocations(prev => ({ ...prev, [loc.user_id]: loc }));
+            }
           }
         }
       )
@@ -135,7 +133,7 @@ export default function MapScreen() {
   }
 
   function isStale(isoString: string): boolean {
-    return Date.now() - new Date(isoString).getTime() > 60 * 60_000; // > 1 h
+    return Date.now() - new Date(isoString).getTime() > 10 * 60_000; // > 10 min
   }
 
   if (permissionDenied) {

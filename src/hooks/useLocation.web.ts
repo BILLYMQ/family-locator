@@ -1,23 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
-// ── Mode diagnostic ───────────────────────────────────────────────────────────
-// Passer à false avant de déployer en production.
 export const DEBUG_GPS = true;
 
-const PUSH_THROTTLE_MS   = DEBUG_GPS ?      5_000 :  60_000;
-const TRACKING_INTERV_MS = DEBUG_GPS ?     30_000 : 300_000;
+// Clé localStorage pour restaurer le suivi après rechargement de page
+const TRACKING_PERSIST_KEY = 'fl_tracking_active';
+
+const PUSH_THROTTLE_MS   = DEBUG_GPS ?   5_000 :  60_000;
+const TRACKING_INTERV_MS = DEBUG_GPS ?  30_000 : 300_000;
 
 // ── Types publics ────────────────────────────────────────────────────────────
 export interface WebLocationObject {
   coords: {
-    latitude: number;
-    longitude: number;
-    accuracy: number | null;
-    altitude: number | null;
-    altitudeAccuracy: number | null;
-    heading: number | null;
-    speed: number | null;
+    latitude: number; longitude: number;
+    accuracy: number | null; altitude: number | null;
+    altitudeAccuracy: number | null; heading: number | null; speed: number | null;
   };
   timestamp: number;
 }
@@ -31,58 +28,37 @@ export interface PushResult {
 export interface DebugInfo {
   watchId: number | null;
   watchActive: boolean;
-  lastLocalPos: {
-    lat: number; lng: number;
-    accuracy: number | null;
-    ts: number; tsStr: string;
-  } | null;
+  lastLocalPos: { lat: number; lng: number; accuracy: number | null; ts: number; tsStr: string; } | null;
   samePos: boolean;
-  distanceMoved: number | null;  // mètres depuis le fix précédent (null = 1er fix)
-  posFixed: boolean;             // coordonnées exactement identiques au fix précédent
-  lastPushed: {
-    lat: number; lng: number;
-    accuracy: number | null;
-    updatedAt: string;
-    ok: boolean;
-    error?: string;
-  } | null;
+  distanceMoved: number | null;
+  posFixed: boolean;
+  lastPushed: { lat: number; lng: number; accuracy: number | null; updatedAt: string; ok: boolean; error?: string; } | null;
   lastGeoError: string | null;
   lastSupabaseError: string | null;
   permState: 'granted' | 'prompt' | 'denied' | 'checking' | 'n/a';
 }
 
-const GEO_OPTS: PositionOptions = {
-  enableHighAccuracy: true,
-  timeout:    15_000,
-  maximumAge: 0,
-};
+const GEO_OPTS: PositionOptions = { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 };
 
 function geoErrorMsg(err: GeolocationPositionError): string {
   switch (err.code) {
-    case GeolocationPositionError.PERMISSION_DENIED:
-      return 'Accès refusé (🔒 → Position → Autoriser).';
-    case GeolocationPositionError.TIMEOUT:
-      return 'Délai GPS dépassé. Réessayez en extérieur.';
-    default:
-      return 'Position indisponible. Vérifiez la localisation système.';
+    case GeolocationPositionError.PERMISSION_DENIED: return 'Accès refusé (🔒 → Position → Autoriser).';
+    case GeolocationPositionError.TIMEOUT:           return 'Délai GPS dépassé. Réessayez en extérieur.';
+    default:                                         return 'Position indisponible. Vérifiez la localisation système.';
   }
 }
 
 const INIT_DEBUG: DebugInfo = {
   watchId: null, watchActive: false,
-  lastLocalPos: null, samePos: false,
-  distanceMoved: null, posFixed: false,
-  lastPushed: null,
-  lastGeoError: null, lastSupabaseError: null,
-  permState: 'checking',
+  lastLocalPos: null, samePos: false, distanceMoved: null, posFixed: false,
+  lastPushed: null, lastGeoError: null, lastSupabaseError: null, permState: 'checking',
 };
 
-// Distance Haversine en mètres entre deux points GPS
 function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R   = 6_371_000;
+  const R = 6_371_000;
   const dLa = (lat2 - lat1) * Math.PI / 180;
   const dLo = (lng2 - lng1) * Math.PI / 180;
-  const a   = Math.sin(dLa / 2) ** 2
+  const a = Math.sin(dLa / 2) ** 2
     + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLo / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
@@ -95,22 +71,19 @@ export function useLocation() {
   const [trackingUntil,    setTrackingUntil]     = useState<Date | null>(null);
   const [debugInfo,        setDebugInfo]         = useState<DebugInfo>(INIT_DEBUG);
 
-  const watchIdRef    = useRef<number | null>(null);
   const intervalRef   = useRef<ReturnType<typeof setInterval> | null>(null);
-  const autoStopRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoStopRef   = useRef<ReturnType<typeof setTimeout>  | null>(null);
   const trackingRef   = useRef(false);
   const lastPushRef   = useRef<number>(0);
   const prevTsRef     = useRef<number | null>(null);
   const prevCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
+  const restoredRef   = useRef(false);
 
   useEffect(() => { trackingRef.current = tracking; }, [tracking]);
 
   // ── Permission ───────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!('permissions' in navigator)) {
-      setDebugInfo(p => ({ ...p, permState: 'n/a' }));
-      return;
-    }
+    if (!('permissions' in navigator)) { setDebugInfo(p => ({ ...p, permState: 'n/a' })); return; }
     navigator.permissions.query({ name: 'geolocation' }).then(status => {
       setDebugInfo(p => ({ ...p, permState: status.state as DebugInfo['permState'] }));
       status.addEventListener('change', () =>
@@ -119,175 +92,162 @@ export function useLocation() {
     }).catch(() => setDebugInfo(p => ({ ...p, permState: 'n/a' })));
   }, []);
 
-  // ── Upsert interne Supabase ───────────────────────────────────────────────
-  async function _upsert(loc: WebLocationObject): Promise<void> {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const updatedAt = new Date().toISOString();
-    const { error } = await supabase.from('locations').upsert(
-      {
-        user_id:    user.id,
-        latitude:   loc.coords.latitude,
-        longitude:  loc.coords.longitude,
-        accuracy:   loc.coords.accuracy,
-        updated_at: updatedAt,
-      },
-      { onConflict: 'user_id' }
-    );
-    if (DEBUG_GPS) {
-      const info = { lat: loc.coords.latitude, lng: loc.coords.longitude, updatedAt };
-      if (error) {
-        console.warn('[GPS] _upsert ERROR', error.message, info);
-        setDebugInfo(p => ({ ...p,
-          lastSupabaseError: error.message,
-          lastPushed: { lat: loc.coords.latitude, lng: loc.coords.longitude, accuracy: loc.coords.accuracy, updatedAt, ok: false, error: error.message },
-        }));
-      } else {
-        console.log('[GPS] _upsert OK', info);
-        setDebugInfo(p => ({ ...p,
-          lastSupabaseError: null,
-          lastPushed: { lat: loc.coords.latitude, lng: loc.coords.longitude, accuracy: loc.coords.accuracy, updatedAt, ok: true },
-        }));
-      }
-    }
-  }
-
-  // ── watchPosition ─────────────────────────────────────────────────────────
+  // ── Restauration du suivi après rechargement de page ─────────────────────
+  // Si l'utilisateur avait activé le partage avant de recharger la page,
+  // on le restaure automatiquement sans lui redemander.
   useEffect(() => {
-    if (!('geolocation' in navigator)) {
-      setPermissionDenied(true);
-      if (DEBUG_GPS) setDebugInfo(p => ({ ...p, watchActive: false, lastGeoError: 'API absente' }));
-      return;
-    }
-    if (DEBUG_GPS) console.log('[GPS] watchPosition START (maximumAge:0, timeout:15s, highAccuracy:true)');
-
-    const watchId = navigator.geolocation.watchPosition(
-      async pos => {
-        const loc     = posToObj(pos);
-        const lat     = pos.coords.latitude;
-        const lng     = pos.coords.longitude;
-        const samePos = prevTsRef.current === pos.timestamp;
-        prevTsRef.current = pos.timestamp;
-
-        // Distance depuis le fix précédent
-        const prev = prevCoordsRef.current;
-        const distanceMoved = prev ? haversineM(prev.lat, prev.lng, lat, lng) : null;
-        const posFixed      = distanceMoved !== null && distanceMoved < 0.1;
-        prevCoordsRef.current = { lat, lng };
-
-        if (DEBUG_GPS) {
-          const tsStr = new Date(pos.timestamp).toLocaleTimeString('fr-FR');
-          const distStr = distanceMoved !== null ? `${distanceMoved.toFixed(1)} m` : 'premier fix';
-          console.log(
-            `[GPS] watchPosition${samePos ? ' ⚠️ MÊME TS' : ''}${posFixed ? ' ⚠️ POS FIXE' : ''}`,
-            { lat, lng, acc: pos.coords.accuracy, tsStr, dist: distStr }
-          );
-          setDebugInfo(p => ({ ...p,
-            lastLocalPos: { lat, lng, accuracy: pos.coords.accuracy, ts: pos.timestamp, tsStr },
-            samePos, distanceMoved, posFixed, lastGeoError: null,
-          }));
-        }
-
-        setCurrentLocation(loc);
-
-        if (trackingRef.current) {
-          const now = Date.now();
-          if (now - lastPushRef.current >= PUSH_THROTTLE_MS) {
-            lastPushRef.current = now;
-            await _upsert(loc);
-          }
-        }
-      },
-      err => {
-        const msg = geoErrorMsg(err);
-        if (DEBUG_GPS) {
-          console.warn('[GPS] watchPosition ERROR', err.code, msg);
-          setDebugInfo(p => ({ ...p, lastGeoError: msg }));
-        }
-        if (err.code === GeolocationPositionError.PERMISSION_DENIED) setPermissionDenied(true);
-      },
-      GEO_OPTS,
-    );
-
-    watchIdRef.current = watchId;
-    if (DEBUG_GPS) setDebugInfo(p => ({ ...p, watchId, watchActive: true }));
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-      if (DEBUG_GPS) setDebugInfo(p => ({ ...p, watchActive: false, watchId: null }));
-    };
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    if (typeof window === 'undefined') return;
+    if (localStorage.getItem(TRACKING_PERSIST_KEY) !== '1') return;
+    console.log('[LOCATION] tracking restauré depuis session précédente');
+    // Restauration légère : on relance l'intervalle sans re-push immédiat
+    setTracking(true);
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(_pushViaGetCurrent, TRACKING_INTERV_MS);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Mise à jour manuelle ─────────────────────────────────────────────────
-  async function pushLocation(): Promise<PushResult> {
-    if (!('geolocation' in navigator)) return { success: false, error: 'Géolocalisation non supportée.' };
-    if (DEBUG_GPS) console.log('[GPS] pushLocation START');
-    return new Promise(resolve => {
+  // ── Upsert Supabase ───────────────────────────────────────────────────────
+  async function _upsert(loc: WebLocationObject): Promise<void> {
+    // getSession() lit depuis AsyncStorage sans appel réseau supplémentaire
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return;
+    const updatedAt = new Date().toISOString();
+    const { error } = await supabase.from('locations').upsert(
+      { user_id: session.user.id, latitude: loc.coords.latitude, longitude: loc.coords.longitude, accuracy: loc.coords.accuracy, updated_at: updatedAt },
+      { onConflict: 'user_id' }
+    );
+    console.log(error ? '[LOCATION] push error' : '[LOCATION] push success',
+      { lat: loc.coords.latitude.toFixed(6), lng: loc.coords.longitude.toFixed(6), updatedAt, err: error?.message }
+    );
+    setDebugInfo(p => ({ ...p,
+      lastSupabaseError: error?.message ?? null,
+      lastPushed: { lat: loc.coords.latitude, lng: loc.coords.longitude, accuracy: loc.coords.accuracy, updatedAt, ok: !error, error: error?.message },
+    }));
+    if (error) throw error;
+  }
+
+  // ── Push via getCurrentPosition (bouton manuel + intervalle) ─────────────
+  async function _pushViaGetCurrent(): Promise<WebLocationObject> {
+    return new Promise((resolve, reject) => {
+      console.log('[LOCATION] push start');
       navigator.geolocation.getCurrentPosition(
         async pos => {
           const loc = posToObj(pos);
           setCurrentLocation(loc);
           lastPushRef.current = Date.now();
-
-          if (DEBUG_GPS) console.log('[GPS] getCurrentPosition success', { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy });
-
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) { resolve({ success: false, error: 'Non connecté.' }); return; }
-
-          const updatedAt = new Date().toISOString();
-          const { error } = await supabase.from('locations').upsert(
-            { user_id: user.id, latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy, updated_at: updatedAt },
-            { onConflict: 'user_id' }
-          );
-          if (DEBUG_GPS) {
-            if (error) {
-              console.warn('[GPS] pushLocation ERROR (Supabase)', error.message);
-              setDebugInfo(p => ({ ...p, lastSupabaseError: error.message, lastPushed: { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, updatedAt, ok: false, error: error.message } }));
-            } else {
-              console.log('[GPS] pushLocation SUCCESS', { lat: pos.coords.latitude, lng: pos.coords.longitude, updatedAt });
-              setDebugInfo(p => ({ ...p, lastSupabaseError: null, lastPushed: { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, updatedAt, ok: true } }));
-            }
-          }
-          resolve(error ? { success: false, error: error.message } : { success: true, location: loc });
+          try { await _upsert(loc); resolve(loc); }
+          catch (e) { reject(e); }
         },
         err => {
           const msg = geoErrorMsg(err);
-          if (DEBUG_GPS) {
-            console.warn('[GPS] pushLocation ERROR (GPS)', err.code, msg);
-            setDebugInfo(p => ({ ...p, lastGeoError: msg }));
-          }
-          resolve({ success: false, error: msg });
+          console.warn('[LOCATION] push error (GPS)', msg);
+          setDebugInfo(p => ({ ...p, lastGeoError: msg }));
+          if (err.code === GeolocationPositionError.PERMISSION_DENIED) setPermissionDenied(true);
+          reject(new Error(msg));
         },
         GEO_OPTS,
       );
     });
   }
 
-  // ── Suivi continu ────────────────────────────────────────────────────────
+  // ── watchPosition — écoute continue, pousse vers Supabase si tracking actif ──
+  useEffect(() => {
+    if (!('geolocation' in navigator)) {
+      setPermissionDenied(true);
+      setDebugInfo(p => ({ ...p, watchActive: false, lastGeoError: 'API absente' }));
+      return;
+    }
+    console.log('[LOCATION] watchPosition START');
+    const watchId = navigator.geolocation.watchPosition(
+      async pos => {
+        const lat = pos.coords.latitude, lng = pos.coords.longitude;
+        const samePos = prevTsRef.current === pos.timestamp;
+        prevTsRef.current = pos.timestamp;
+        const prev = prevCoordsRef.current;
+        const distanceMoved = prev ? haversineM(prev.lat, prev.lng, lat, lng) : null;
+        const posFixed = distanceMoved !== null && distanceMoved < 0.1;
+        prevCoordsRef.current = { lat, lng };
+        const tsStr = new Date(pos.timestamp).toLocaleTimeString('fr-FR');
+        setCurrentLocation(posToObj(pos));
+        setDebugInfo(p => ({ ...p,
+          lastLocalPos: { lat, lng, accuracy: pos.coords.accuracy, ts: pos.timestamp, tsStr },
+          samePos, distanceMoved, posFixed, lastGeoError: null,
+        }));
+        // Push automatique si tracking actif et throttle respecté
+        if (trackingRef.current) {
+          const now = Date.now();
+          if (now - lastPushRef.current >= PUSH_THROTTLE_MS) {
+            lastPushRef.current = now;
+            console.log('[LOCATION] push start (watchPosition auto)');
+            await _upsert(posToObj(pos));
+          }
+        }
+      },
+      err => {
+        const msg = geoErrorMsg(err);
+        console.warn('[LOCATION] GPS error', msg);
+        setDebugInfo(p => ({ ...p, lastGeoError: msg }));
+        if (err.code === GeolocationPositionError.PERMISSION_DENIED) setPermissionDenied(true);
+      },
+      GEO_OPTS,
+    );
+    setDebugInfo(p => ({ ...p, watchId, watchActive: true }));
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+      setDebugInfo(p => ({ ...p, watchActive: false, watchId: null }));
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── enableTracking ────────────────────────────────────────────────────────
   async function enableTracking(durationMs?: number): Promise<boolean> {
     if (!('geolocation' in navigator)) return false;
+    console.log('[LOCATION] tracking enabled');
+    setTracking(true);
+    // Persister pour restauration après rechargement
+    if (typeof window !== 'undefined') localStorage.setItem(TRACKING_PERSIST_KEY, '1');
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
     if (autoStopRef.current) { clearTimeout(autoStopRef.current);  autoStopRef.current = null; }
-    setTracking(true);
-    if (DEBUG_GPS) console.log('[GPS] enableTracking → pushLocation immédiat');
-    await pushLocation();
-    intervalRef.current = setInterval(pushLocation, TRACKING_INTERV_MS);
+    // Push immédiat
+    try { await _pushViaGetCurrent(); }
+    catch (e) { console.warn('[LOCATION] push error (on enable)', e); }
+    // Intervalle périodique
+    intervalRef.current = setInterval(_pushViaGetCurrent, TRACKING_INTERV_MS);
     if (durationMs && durationMs > 0) {
       const until = new Date(Date.now() + durationMs);
       setTrackingUntil(until);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) supabase.from('profiles').update({ tracking_until: until.toISOString() }).eq('id', user.id).then(() => {});
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        supabase.from('profiles').update({ tracking_until: until.toISOString() }).eq('id', session.user.id).then(() => {});
+      }
       autoStopRef.current = setTimeout(() => disableTracking(), durationMs);
     }
     return true;
   }
 
+  // ── disableTracking ───────────────────────────────────────────────────────
   async function disableTracking(): Promise<void> {
+    console.log('[LOCATION] tracking disabled');
     setTracking(false);
     setTrackingUntil(null);
+    if (typeof window !== 'undefined') localStorage.removeItem(TRACKING_PERSIST_KEY);
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
     if (autoStopRef.current) { clearTimeout(autoStopRef.current);  autoStopRef.current = null; }
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) supabase.from('profiles').update({ tracking_until: null }).eq('id', user.id).then(() => {});
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+      supabase.from('profiles').update({ tracking_until: null }).eq('id', session.user.id).then(() => {});
+    }
+  }
+
+  // ── pushLocation (bouton manuel) ─────────────────────────────────────────
+  async function pushLocation(): Promise<PushResult> {
+    if (!('geolocation' in navigator)) return { success: false, error: 'Géolocalisation non supportée.' };
+    try {
+      const loc = await _pushViaGetCurrent();
+      return { success: true, location: loc };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Erreur inconnue' };
+    }
   }
 
   return {

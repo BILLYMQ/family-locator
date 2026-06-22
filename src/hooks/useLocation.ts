@@ -14,6 +14,32 @@ export function useLocation() {
 
   const intervalRef  = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoStopRef  = useRef<ReturnType<typeof setTimeout>  | null>(null);
+  const restoredRef  = useRef(false);
+
+  // ── Restauration du suivi si la tâche background tourne déjà ─────────────
+  // Sur Android, le foreground service survit aux redémarrages de l'app.
+  // On détecte cet état et on rebranche l'intervalle foreground.
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    import('@/tasks/locationTask').then(({ LOCATION_TASK_NAME }) => {
+      import('expo-location').then(Location => {
+        Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME)
+          .then(running => {
+            if (running) {
+              console.log('[LOCATION] tracking restauré (background task déjà actif)');
+              setTracking(true);
+              if (intervalRef.current) clearInterval(intervalRef.current);
+              intervalRef.current = setInterval(async () => {
+                try { await pushCurrentLocation(); }
+                catch (e) { console.warn('[LOCATION] foreground push error (interval):', e); }
+              }, FOREGROUND_INTERVAL_MS);
+            }
+          })
+          .catch(() => {});
+      });
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Écoute locale de la position (marqueur bleu — ne pousse PAS vers Supabase) ──
   useEffect(() => {

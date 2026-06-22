@@ -84,13 +84,17 @@ function formatTime(iso: string): string {
 
 function staleLabel(iso: string): string | null {
   const d = Date.now() - new Date(iso).getTime();
-  if (d < 3_600_000) return null;
+  if (d < 10 * 60_000) return null; // < 10 min : OK
+  if (d < 3_600_000) {
+    const mins = Math.floor(d / 60_000);
+    return `Position ancienne (${mins} min) — ce membre doit ouvrir l'application et activer le partage.`;
+  }
   if (d < 86_400_000) {
     const h = Math.floor(d / 3_600_000);
-    return `Position non mise à jour depuis ${h} h — vérifiez que le partage est activé sur son téléphone.`;
+    return `Position ancienne (${h} h) — ce membre doit ouvrir l'application et activer le partage.`;
   }
   const days = Math.floor(d / 86_400_000);
-  return `Position non mise à jour depuis ${days} jour${days > 1 ? 's' : ''} — vérifiez que le partage est activé sur son téléphone.`;
+  return `Position ancienne (${days} jour${days > 1 ? 's' : ''}) — ce membre doit ouvrir l'application et activer le partage.`;
 }
 
 function memberStatus(updatedAt: string | undefined): { color: string; label: string } {
@@ -377,20 +381,21 @@ export default function MapScreen() {
       setMemberLocations(acc);
     });
 
+    // Pas de filtre server-side : RLS garantit qu'on ne reçoit que les membres
+    // de notre famille. Un filtre user_id=in.(...) peut être silencieusement ignoré
+    // par Supabase Realtime selon la version, et REPLICA IDENTITY FULL est requis.
     const ch = supabase
       .channel(`map_locs_${Date.now()}`)
       .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'locations', filter: `user_id=in.(${ids.join(',')})` },
+        { event: '*', schema: 'public', table: 'locations' },
         payload => {
+          console.log('[REALTIME] location update received', payload.eventType, (payload.new as any)?.user_id ?? (payload.old as any)?.user_id);
           if (payload.eventType === 'DELETE') {
-            setMemberLocations(p => {
-              const n = { ...p };
-              delete n[(payload.old as { user_id: string }).user_id];
-              return n;
-            });
+            const uid = (payload.old as { user_id: string }).user_id;
+            if (ids.includes(uid)) setMemberLocations(p => { const n = { ...p }; delete n[uid]; return n; });
           } else {
             const loc = payload.new as Location;
-            setMemberLocations(p => ({ ...p, [loc.user_id]: loc }));
+            if (ids.includes(loc.user_id)) setMemberLocations(p => ({ ...p, [loc.user_id]: loc }));
           }
         })
       .subscribe();
@@ -399,11 +404,11 @@ export default function MapScreen() {
   }, [user, members]);
 
   useEffect(() => {
-    // "en ligne" = position reçue il y a moins de 15 minutes
+    // "en ligne" = position reçue il y a moins de 10 minutes
     setOnlineCount(members.filter(m => {
       const loc = memberLocations[m.id];
       if (!loc) return false;
-      return Date.now() - new Date(loc.updated_at).getTime() < 15 * 60_000;
+      return Date.now() - new Date(loc.updated_at).getTime() < 10 * 60_000;
     }).length);
   }, [members, memberLocations]);
 
